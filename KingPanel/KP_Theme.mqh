@@ -76,6 +76,47 @@ int KP_S(const int px) { return (int)MathRound(px * KP_Scale); }
 // font size in tenths of points (negative => device independent)
 int KP_F(const double pt) { return -(int)MathRound(pt * 10.0); }
 
+// runtime channel mix toward a target color — ALWAYS returns opaque
+// (heatmap gradients etc. must never introduce translucent pixels)
+uint KP_Mix(const uint base, const uint target, double f)
+  {
+   if(f < 0.0) f = 0.0;
+   if(f > 1.0) f = 1.0;
+   int br = (int)((base   >> 16) & 255), bg = (int)((base   >> 8) & 255), bb = (int)(base   & 255);
+   int tr = (int)((target >> 16) & 255), tg = (int)((target >> 8) & 255), tb = (int)(target & 255);
+   uint r = (uint)(br + (tr - br) * f);
+   uint g = (uint)(bg + (tg - bg) * f);
+   uint b = (uint)(bb + (tb - bb) * f);
+   return 0xFF000000 | (r << 16) | (g << 8) | b;
+  }
+
+//--- phone push (native SendNotification) ---------------------------
+bool KP_PushOn    = true;
+bool KP_PushRisk  = true;
+bool KP_PushNews  = true;
+bool kp_push_hinted = false;
+
+// event queue drained by the optional Telegram module (KP_Tg.mqh);
+// KP_Push is the single chokepoint every alert flows through
+string g_push_queue[20];
+int    g_push_queue_n = 0;
+
+void KP_Push(const string msg)
+  {
+   if((bool)MQLInfoInteger(MQL_TESTER))
+      return;
+   if(g_push_queue_n < 20)
+      g_push_queue[g_push_queue_n++] = msg;
+   if(!KP_PushOn)
+      return;
+   if(!SendNotification("[KING PANEL] " + msg) && !kp_push_hinted)
+     {
+      kp_push_hinted = true;   // one-time hint, don't spam the journal
+      Print("[KING PANEL] push failed — set your MetaQuotes ID in ",
+            "Tools > Options > Notifications");
+     }
+  }
+
 //--- value color helper ---------------------------------------------
 uint KP_PLColor(const double v)
   {

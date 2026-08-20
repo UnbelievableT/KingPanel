@@ -1,8 +1,16 @@
-# KING PANEL V1.2
+# KING PANEL V1.4
 
 **English** | [简体中文](README.zh-CN.md)
 
+![Overview](docs/overview.png)
+![Analysis](docs/analysis.png)
+![News](docs/news.png)
+
 A Bloomberg-terminal style account dashboard EA for MetaTrader 5. Pure `CCanvas` bitmap rendering — near-black terminal background, amber accent, square corners, 1px separators, monospace numerics — in a compact, high-density layout. DPI-aware (auto-scales on 4K / scaled displays), draggable, collapsible, and the panel height fills the chart window.
+
+**V1.4 highlights**: **per-position automation** — break-even / panel-maintained trailing stop / half-close per row plus BE-ALL, TR-ALL and a trailing-distance stepper (trails only on the profitable side, never loosens, broker stop-level aware); **news guard** — entry blocking around filtered events for currency-related symbols and one-shot **auto-flat** of exposed positions before events; **Chart Center 2.0** — every page is now a composed layout with height-capped plots (no more stretched charts): equity + underwater + rolling 20-trade PF, daily bars + hold-time analysis (disposition-effect detector), monthly bars + R-multiple distribution, drawdown + streaks + three worst episodes, MFE/MAE + range-efficiency block, session heatmap + hourly-net bars; **one-click EXPORT** (positions/daily CSV + dark HTML statement with inline-SVG equity + full-chart PNG); **Telegram delivery** (event stream + daily digest via your own bot, optional); **multi-account fleet view** (all panels on the machine aggregate via the common folder); **magic aliases** ("12345=KING S1"); incremental fast-path history scan (no more 20-second full rescans on 10k+ deal accounts).
+
+**V1.3 highlights**: **risk-% position sizing** in the order ticket (LOT/RISK modes, lots computed from equity × risk% ÷ SL distance via OrderCalcProfit, floor-rounded so realized risk never exceeds intent, live money-at-risk readout); **prop-style daily-loss guard** (realized-since-reset + floating vs a daily limit; on breach closes everything and **locks the order ticket until the next reset**, 80% budget warning, configurable reset hour, LOCKED countdown in the account strip); **native phone push** via SendNotification for every risk/lockout/news event; **session heatmap** in the Chart Center (24h × weekday P&L grid, trade counts in cells, SYD/TYO/LON/NYC bands mapped into server time, best/worst cell callout).
 
 **V1.1–V1.2 highlights**: EN/CN bilingual UI (English default, one-click toggle in the title bar); gold chart theme (applied on load, original settings restored on removal); **order ticket** (market + four pending order types, lot/SL/TP/distance steppers, one-click execution); Chart Center with five full-size charts (equity curve, daily P&L, monthly P&L, underwater drawdown, **MFE×MAE scatter** — symmetric-scale square plot with green/red quadrant tints, E-Ratio and capture rate); pending-orders sub-page with per-row deletion; **per-period max drawdown + DD%** columns in the Analysis tab; economic calendar with **currency filter** (USD/EUR/JPY default, 10-currency chips), on-chart event lines with **lane-layout horizontal labels**, and starred popup alerts; adjustable panel width (600 px default, cent-account friendly); every panel fill is a **pre-blended opaque color** (no see-through pixels over the chart).
 
@@ -35,14 +43,14 @@ KingPanel/
 | Tab | Contents |
 |---|---|
 | **OVERVIEW** | Four KPI tiles (equity / balance / floating P&L / margin level); equity curve (full history ↔ live 30-minute equity, FULL opens the Chart Center); 18 core statistics; win-rate ring gauge; algo-vs-manual split bar; today / week / month P&L |
-| **Chart Center** | Opened via FULL: ① full-size equity curve ② daily P&L bars (last 60 days) ③ monthly P&L bars ④ underwater drawdown curve with deepest-point marker ⑤ **MFE×MAE scatter** (X = max adverse excursion, Y = max favorable excursion, green dot = win / red ring = loss, MFE=MAE diagonal, E-Ratio / avg MFE / avg MAE / capture rate) |
+| **Chart Center** | Six composed pages (all plots height-capped): ① equity curve + underwater strip + **rolling 20-trade profit factor** ② daily bars + **hold-time analysis** with the winners/losers hold ratio ③ monthly bars + **R-multiple distribution** (SL-based, MAE proxy on small samples) ④ drawdown + **streaks** (current/max, last-10 dots) + three worst episodes with dates ⑤ **MFE×MAE scatter** (quadrant tints, E-Ratio, capture) + **range efficiency** (entry/exit/total) ⑥ **session heatmap** + hourly-net bars |
 | **ANALYSIS** | Aggregated by day / week / month / year: trades, lots, win rate, gross profit, gross loss, **max drawdown + DD%** (intra-period realized-equity peak-to-trough; DD% = drawdown ÷ balance at the peak), net; full-history TOTAL row pinned at the bottom |
 | **SYMBOLS** | Per-symbol aggregation + profit distribution bars; click the NET header to flip sort order |
 | **MAGICS** | Per-magic-number aggregation; magic 0 shows as MANUAL |
-| **TRADE** | Long/short exposure summary; six bulk operations; POSITIONS / ORDERS sub-pages — per-row close × for positions, **pending order list** (type / price / now / distance / age) with per-row delete × |
-| **ORDER** | Symbol cycling through Market Watch, live bid/ask/spread, lot stepper + four quick presets, SL/TP/pending-distance steppers (points), large SELL/BUY buttons and B-LMT / S-LMT / B-STP / S-STP pending buttons — all **one-click execution**, pending prices auto-respect the broker's stops level; configurable magic (default 0 = counted as manual) |
-| **RISK** | Four one-shot risk guards: float-loss close-all, float-profit close-all, equity floor, daily timed close; −/+ steppers, persisted per account |
-| **NEWS** | Native MT5 economic calendar (server timezone); importance filter; **on-chart vertical lines for the next 48 h** (red/amber/gray by importance) with horizontal, lane-layout labels that never stack; **popup alerts** (importance threshold and lead minutes adjustable); currency filter chips; next-event countdown and row highlight |
+| **TRADE** | Long/short exposure summary; six bulk operations; POS / ORD / **ACCOUNTS** sub-pages — positions rows carry **B** (break-even) / **T** (trailing toggle) / **½** (half-close) / × buttons with a BE-ALL / TR-ALL / trailing-distance toolbar; pending order list with per-row delete; ACCOUNTS aggregates every panel instance on the machine (equity/float/day P&L/lockout state, stale detection) |
+| **ORDER** | Symbol cycling through Market Watch, live bid/ask/spread, **LOT / RISK-% sizing modes** (risk presets 0.25/0.5/1/2%, computed lots + money-at-risk readout, refuses when SL unset or risk exceeds the remaining day budget), lot stepper + four quick presets, SL/TP/pending-distance steppers (points), large SELL/BUY buttons and B-LMT / S-LMT / B-STP / S-STP pending buttons — all **one-click execution**, pending prices auto-respect the broker's stops level; configurable magic (default 0 = counted as manual) |
+| **RISK** | Readout strip (float / day P&L / remaining day budget / positions); four one-shot guards (float-loss, float-profit, equity floor, timed close) plus the **DAILY LOSS lockout guard** (always-armed daily; toggling OFF clears an active lockout; arming while already beyond the limit locks orders without touching positions) |
+| **NEWS** | Native MT5 economic calendar (server timezone); importance filter; **trade guard row** (BLOCK = refuse new orders around filtered events touching the symbol's currencies, FLAT = one-shot auto-close of exposed positions before events, PRE/POST window steppers); **on-chart vertical lines for the next 48 h** (red/amber/gray by importance) with horizontal, lane-layout labels that never stack; **popup alerts** (importance threshold and lead minutes adjustable); currency filter chips; next-event countdown and row highlight |
 
 ## Interaction
 
@@ -83,6 +91,14 @@ KingPanel/
 | News | InpNewsMarks | true | On-chart event lines + lane-layout labels |
 | News | InpNewsCurs | USD,EUR,JPY | Default currencies (first load only; chip multi-select persisted afterwards) |
 | Order | InpPanelMagic | 0 | Magic number for panel orders (0 = counted as manual) |
+| Auto | InpBEBuffer / InpTrailPts | 20 / 200 | Break-even lock-in buffer / default trailing distance (points) |
+| Telegram | InpTgToken / InpTgChat / InpTgDaily | empty / empty / true | Own-bot delivery of the alert stream + daily digest (whitelist api.telegram.org) |
+| Fleet | InpFleetOn | true | Publish heartbeat snapshot for the multi-account view |
+| Fleet | InpMagicAliases | empty | Name your magics: "12345=KING S1;678=Grid v2" |
+| Push | InpPushOn / InpPushRisk / InpPushNews | true | Phone push master + per-category switches (set your MetaQuotes ID in Tools → Options → Notifications) |
+| Prop | InpPropOn | false | Daily-loss guard armed by default (first load only) |
+| Prop | InpDefDailyLoss | 500 | Daily loss limit default (account currency) |
+| Prop | InpPropResetHH | 0 | Daily reset hour (server time) |
 | Risk | InpDefFloatSL / InpDefFloatTP | 500 / 500 | Loss / profit guard defaults (first load only) |
 | Risk | InpDefCloseHH:MM | 22:30 | Timed-close default (server time) |
 | Brand | InpShowBrand | true | Show the Telegram channel |

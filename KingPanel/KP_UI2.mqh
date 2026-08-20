@@ -11,6 +11,8 @@ int KPU_ScrollSlot(const int tab)
   {
    if(tab == 4 && g_pos_sub == 1)
       return 8;
+   if(tab == 4 && g_pos_sub == 2)
+      return 9;
    return tab;
   }
 
@@ -30,6 +32,7 @@ int KPU_MaxScroll(const int slot)
       case 4: n = g_live_count;        break;
       case 7: n = KPN_FilteredCount(); break;
       case 8: n = g_ord_count;         break;
+      case 9: n = g_fleet_n;           break;
      }
    return MathMax(0, n - KPU_VisRows(slot));
   }
@@ -312,14 +315,36 @@ void KPU_DrawPositions(const int W, const int y0)
      }
    y += bh + KP_S(5);
 
-   // sub tabs
-   int sw = KP_S(96);
+   // sub tabs + per-position automation toolbar
+   int sw = KP_S(84);
    KPU_Chip(px, y, sw, KP_S(16),
-            StringFormat(LL("POSITIONS %d", "持仓 %d"), g_live_count),
-            g_pos_sub == 0, KPHIT_POSSUB, 0, 6.4);
+            StringFormat(LL("POS %d", "持仓 %d"), g_live_count),
+            g_pos_sub == 0, KPHIT_POSSUB, 0, 6.2);
    KPU_Chip(px + sw + KP_S(4), y, sw, KP_S(16),
-            StringFormat(LL("ORDERS %d", "挂单 %d"), g_ord_count),
-            g_pos_sub == 1, KPHIT_POSSUB, 1, 6.4);
+            StringFormat(LL("ORD %d", "挂单 %d"), g_ord_count),
+            g_pos_sub == 1, KPHIT_POSSUB, 1, 6.2);
+   KPU_Chip(px + 2*(sw + KP_S(4)), y, sw, KP_S(16),
+            LL("ACCOUNTS", "多账户"),
+            g_pos_sub == 2, KPHIT_POSSUB, 2, 6.2);
+   if(g_pos_sub == 0 && g_live_count > 0)
+     {
+      int ax_min = px + 3*(sw + KP_S(4)) + KP_S(6);
+      int ax0 = MathMax(ax_min, px + cw - KP_S(266));
+      bool full = (px + cw - ax0 >= KP_S(266));
+      KPC_Button(ax0, y, KP_S(52), KP_S(16), LL("BE ALL", "全保本"),
+                 KP_TXT, KP_BTN, KPHIT_AT_BEALL, 0, "", 6.0);
+      KPC_Button(ax0 + KP_S(56), y, KP_S(52), KP_S(16), LL("TR ALL", "全追踪"),
+                 KP_AMBER, KP_BTN, KPHIT_AT_TRALL, 0, "", 6.0);
+      if(full)
+        {
+         KPC_Lbl(ax0 + KP_S(114), y + KP_S(3), LL("TRAIL", "追踪距"), KP_TXT_FAINT, 6.0);
+         KPC_Button(ax0 + KP_S(150), y, KP_S(14), KP_S(16), "-", KP_TXT, KP_BTN,
+                    KPHIT_AT_TRSTEP, 0, "", 6.8, false);
+         KPC_Num(ax0 + KP_S(186), y + KP_S(3), (string)KPT_TrailPts + "pt", KP_AMBER, 6.2, 1);
+         KPC_Button(ax0 + KP_S(212), y, KP_S(14), KP_S(16), "+", KP_TXT, KP_BTN,
+                    KPHIT_AT_TRSTEP, 1, "", 6.8, false);
+        }
+     }
    y += KP_S(20);
 
    int vis = KPU_VisRows(KPU_ScrollSlot(4)), rh = KP_S(KPL_ROW);
@@ -329,9 +354,9 @@ void KPU_DrawPositions(const int W, const int y0)
    if(g_pos_sub == 0)
      {
       // positions table
-      int c_sym = KP_S(76), c_dir = KP_S(28), c_lot = KP_S(50);
-      int c_op  = KP_S(80), c_cp  = KP_S(80), c_pl = KP_S(88);
-      int c_tm  = cw - c_sym - c_dir - c_lot - c_op - c_cp - c_pl - KP_S(22);
+      int c_sym = KP_S(72), c_dir = KP_S(28), c_lot = KP_S(50);
+      int c_op  = KP_S(68), c_cp  = KP_S(68), c_pl = KP_S(84);
+      int c_tm  = cw - c_sym - c_dir - c_lot - c_op - c_cp - c_pl - KP_S(78);
       KPC_Fill(px, y, cw, KP_S(KPL_THEAD), KP_BG_THEAD);
       int ty = y + KP_S(4), hx = px;
       KPC_Lbl(hx + KP_S(3), ty, LL("SYMBOL", "品种"), KP_TXT_DIM, 6.4);   hx += c_sym;
@@ -372,6 +397,22 @@ void KPU_DrawPositions(const int W, const int y0)
             KPC_Num(xx + c_cp - KP_S(3), ry, DoubleToString(g_live[di].price_cur, dg), KP_TXT, 6.8, 2); xx += c_cp;
             KPC_Num(xx + c_pl - KP_S(3), ry, KP_MoneySigned(g_live[di].profit,1), KP_PLColor(g_live[di].profit), 6.8, 2, true); xx += c_pl;
             KPC_Num(xx + c_tm - KP_S(3), ry, KP_Duration((long)(TimeCurrent() - g_live[di].time)), KP_TXT_FAINT, 6.4, 2);
+            // automation: BE / trail toggle / close half / close
+            bool tr_on = KPT_TrailOn(g_live[di].ticket);
+            int bx0 = px + cw - KP_S(70);
+            KPC_Fill(bx0, yy + KP_S(2), KP_S(15), rh - KP_S(4), KP_BTN);
+            KPC_Num(bx0 + KP_S(7), yy + KP_S(3), "B", KP_CYAN, 6.4, 1, true);
+            KPC_AddHit(bx0, yy, KP_S(17), rh, KPHIT_AT_BE, (long)g_live[di].ticket);
+            int bx1 = px + cw - KP_S(52);
+            KPC_Fill(bx1, yy + KP_S(2), KP_S(15), rh - KP_S(4),
+                     (tr_on ? KP_AMBER : KP_BTN));
+            KPC_Num(bx1 + KP_S(7), yy + KP_S(3), "T",
+                    (tr_on ? KP_BG : KP_TXT_DIM), 6.4, 1, true);
+            KPC_AddHit(bx1, yy, KP_S(17), rh, KPHIT_AT_TR, (long)g_live[di].ticket);
+            int bx2 = px + cw - KP_S(34);
+            KPC_Fill(bx2, yy + KP_S(2), KP_S(15), rh - KP_S(4), KP_BTN);
+            KPC_Text(bx2 + KP_S(7), yy + KP_S(3), "½", KP_TXT_DIM, KP_FontCJK, 6.2, 1);
+            KPC_AddHit(bx2, yy, KP_S(17), rh, KPHIT_AT_HALF, (long)g_live[di].ticket);
             int cx = px + cw - KP_S(16);
             KPC_Fill(cx, yy + KP_S(2), KP_S(13), rh - KP_S(4), KP_BTN);
             KPC_Num(cx + KP_S(6), yy + KP_S(3), "×", KP_RED, 6.8, 1, true);
@@ -381,7 +422,7 @@ void KPU_DrawPositions(const int W, const int y0)
       y += vis*rh;
       KPU_ScrollUI(W - KP_S(18), table_y, vis*rh, 4);
      }
-   else
+   else if(g_pos_sub == 1)
      {
       // pending orders table
       int c_sym = KP_S(76), c_typ = KP_S(46), c_lot = KP_S(50);
@@ -435,6 +476,84 @@ void KPU_DrawPositions(const int W, const int y0)
       y += vis*rh;
       KPU_ScrollUI(W - KP_S(18), table_y, vis*rh, 8);
      }
+   else
+     {
+      // fleet: every KING PANEL instance on this machine (COMMON files)
+      KPF_Read();
+      int c_lg = KP_S(88), c_eq = KP_S(88), c_fl = KP_S(76);
+      int c_dy = KP_S(76), c_ps = KP_S(34), c_st = KP_S(56);
+      int c_sv = MathMax(KP_S(60), cw - c_lg - c_eq - c_fl - c_dy - c_ps - c_st);
+      KPC_Fill(px, y, cw, KP_S(KPL_THEAD), KP_BG_THEAD);
+      int ty = y + KP_S(4), hx = px;
+      KPC_Lbl(hx + KP_S(3), ty, LL("LOGIN", "账号"), KP_TXT_DIM, 6.4);        hx += c_lg;
+      KPC_Lbl(hx, ty, LL("SERVER", "服务器"), KP_TXT_DIM, 6.4);              hx += c_sv;
+      KPC_Lbl(hx + c_eq - KP_S(3), ty, LL("EQUITY", "净值"), KP_TXT_DIM, 6.4, 2);  hx += c_eq;
+      KPC_Lbl(hx + c_fl - KP_S(3), ty, LL("FLOAT", "浮动"), KP_TXT_DIM, 6.4, 2);   hx += c_fl;
+      KPC_Lbl(hx + c_dy - KP_S(3), ty, LL("DAY", "当日"), KP_TXT_DIM, 6.4, 2);     hx += c_dy;
+      KPC_Lbl(hx + c_ps - KP_S(3), ty, LL("POS", "持仓"), KP_TXT_DIM, 6.4, 2);     hx += c_ps;
+      KPC_Lbl(hx + c_st - KP_S(3), ty, LL("STATE", "状态"), KP_TXT_DIM, 6.4, 2);
+      y += KP_S(KPL_THEAD);
+      int table_y = y;
+      g_scroll[9] = MathMax(0, MathMin(g_scroll[9], KPU_MaxScroll(9)));
+
+      if(g_fleet_n == 0)
+        {
+         KPC_Fill(px, y, cw, vis*rh, KP_BG_CELL);
+         KPC_Lbl(px + cw/2, y + vis*rh/2 - KP_S(16),
+                 LL("NO OTHER PANELS DETECTED", "未检测到其他面板实例"),
+                 KP_TXT_FAINT, 7.6, 1);
+         KPC_Lbl(px + cw/2, y + vis*rh/2 + KP_S(4),
+                 LL("Attach KING PANEL on other terminals of this machine",
+                    "在本机其他终端挂载 KING PANEL 即自动汇聚"),
+                 KP_TXT_FAINT, 6.2, 1);
+        }
+      else
+        {
+         double sum_eq = 0, sum_fl = 0;
+         for(int i=0; i<g_fleet_n; i++)
+           {
+            sum_eq += g_fleet[i].equity;
+            sum_fl += g_fleet[i].floating;
+           }
+         for(int r=0; r<vis; r++)
+           {
+            int yy = y + r*rh;
+            KPC_Fill(px, yy, cw, rh, (r % 2 == 0 ? KP_BG_CELL : KP_BG_CELL2));
+            int di = g_scroll[9] + r;
+            if(di >= g_fleet_n)
+               continue;
+            bool stale = (g_fleet[di].age > 30);
+            bool self  = (g_fleet[di].login == g_acc.login);
+            uint mc = (stale ? KP_TXT_FAINT : KP_TXT);
+            int xx = px, ry = yy + KP_S(3);
+            KPC_Num(xx + KP_S(3), ry, (string)g_fleet[di].login,
+                    (self ? KP_AMBER : mc), 6.8, 0, self); xx += c_lg;
+            KPC_Num(xx, ry, KPU_Trunc(g_fleet[di].server, c_sv - KP_S(8),
+                    KP_FontMono, 6.6), (stale ? KP_TXT_FAINT : KP_TXT_DIM), 6.6); xx += c_sv;
+            KPC_Num(xx + c_eq - KP_S(3), ry, KP_MoneyAuto(g_fleet[di].equity), mc, 6.8, 2); xx += c_eq;
+            KPC_Num(xx + c_fl - KP_S(3), ry, KP_MoneySigned(g_fleet[di].floating, 0),
+                    (stale ? KP_TXT_FAINT : KP_PLColor(g_fleet[di].floating)), 6.8, 2); xx += c_fl;
+            KPC_Num(xx + c_dy - KP_S(3), ry, KP_MoneySigned(g_fleet[di].day_pl, 0),
+                    (stale ? KP_TXT_FAINT : KP_PLColor(g_fleet[di].day_pl)), 6.8, 2); xx += c_dy;
+            KPC_Num(xx + c_ps - KP_S(3), ry, (string)g_fleet[di].positions, KP_TXT_DIM, 6.8, 2); xx += c_ps;
+            if(g_fleet[di].locked)
+               KPC_Num(xx + c_st - KP_S(3), ry, "LOCK", KP_RED, 6.6, 2, true);
+            else
+               KPC_Num(xx + c_st - KP_S(3), ry,
+                       (stale ? LL("STALE", "失联") : (string)g_fleet[di].age + "s"),
+                       (stale ? KP_YELLOW : KP_TXT_FAINT), 6.6, 2);
+           }
+         KPC_HLine(px, px+cw-1, y + vis*rh, KP_AMBER_DIM);
+         KPC_Lbl(px + KP_S(3), y + vis*rh + KP_S(4),
+                 StringFormat(LL("%d ACCOUNTS", "共 %d 个账户"), g_fleet_n),
+                 KP_TXT_FAINT, 6.4);
+         KPC_Num(px + cw - KP_S(3), y + vis*rh + KP_S(4),
+                 StringFormat(LL("TOTAL EQUITY %s   FLOAT %s", "净值合计 %s   浮动 %s"),
+                 KP_MoneyAuto(sum_eq), KP_MoneySigned(sum_fl, 0)), KP_TXT_DIM, 6.6, 2);
+        }
+      y += vis*rh;
+      KPU_ScrollUI(W - KP_S(18), table_y, vis*rh, 9);
+     }
   }
 
 //--- order ticket tab ------------------------------------------------
@@ -474,20 +593,41 @@ void KPU_DrawOrder(const int W, const int y0)
    KPC_Num(px + cw, y + KP_S(5), StringFormat("SPR %d", (int)sprd), KP_TXT_FAINT, 6.4, 2);
    y += KP_S(26);
 
-   //-- lots row
-   KPC_Lbl(px, y + KP_S(4), LL("LOTS", "手数"), KP_TXT_DIM, 6.6);
-   KPC_Button(px + KP_S(50), y, KP_S(18), KP_S(18), "-", KP_TXT, KP_BTN, KPHIT_OT_LOTS, 0, "", 7.6, false);
-   KPC_Fill(px + KP_S(70), y, KP_S(66), KP_S(18), KP_BG_INPUT);
-   KPC_Frame(px + KP_S(70), y, KP_S(66), KP_S(18), KP_SEP);
-   KPC_Num(px + KP_S(103), y + KP_S(3), DoubleToString(g_ot_lots, 2), KP_AMBER, 7.6, 1, true);
-   KPC_Button(px + KP_S(138), y, KP_S(18), KP_S(18), "+", KP_TXT, KP_BTN, KPHIT_OT_LOTS, 1, "", 7.6, false);
-   double presets[4] = {0.01, 0.10, 0.50, 1.00};
-   for(int i=0; i<4; i++)
+   //-- sizing row: fixed lots or risk-percent of equity
+   KPU_Chip(px, y + KP_S(1), KP_S(34), KP_S(16), LL("LOT", "手数"),
+            g_ot_mode == 0, KPHIT_OT_MODE, 0, 6.0);
+   KPU_Chip(px + KP_S(37), y + KP_S(1), KP_S(34), KP_S(16), LL("RISK", "风险"),
+            g_ot_mode == 1, KPHIT_OT_MODE, 1, 6.0);
+   int vx0 = px + KP_S(82);
+   if(g_ot_mode == 0)
      {
-      string pl = DoubleToString(presets[i], 2);
-      bool on = (MathAbs(g_ot_lots - presets[i]) < 0.0000001);
-      KPU_Chip(px + KP_S(170) + i*KP_S(48), y + KP_S(1), KP_S(44), KP_S(16), pl,
-               on, KPHIT_OT_PRESET, i, 6.2);
+      KPC_Button(vx0, y, KP_S(18), KP_S(18), "-", KP_TXT, KP_BTN, KPHIT_OT_LOTS, 0, "", 7.6, false);
+      KPC_Fill(vx0 + KP_S(20), y, KP_S(66), KP_S(18), KP_BG_INPUT);
+      KPC_Frame(vx0 + KP_S(20), y, KP_S(66), KP_S(18), KP_SEP);
+      KPC_Num(vx0 + KP_S(53), y + KP_S(3), DoubleToString(g_ot_lots, 2), KP_AMBER, 7.6, 1, true);
+      KPC_Button(vx0 + KP_S(88), y, KP_S(18), KP_S(18), "+", KP_TXT, KP_BTN, KPHIT_OT_LOTS, 1, "", 7.6, false);
+      double presets[4] = {0.01, 0.10, 0.50, 1.00};
+      for(int i=0; i<4; i++)
+        {
+         bool on = (MathAbs(g_ot_lots - presets[i]) < 0.0000001);
+         KPU_Chip(vx0 + KP_S(112) + i*KP_S(48), y + KP_S(1), KP_S(44), KP_S(16),
+                  DoubleToString(presets[i], 2), on, KPHIT_OT_PRESET, i, 6.2);
+        }
+     }
+   else
+     {
+      KPC_Button(vx0, y, KP_S(18), KP_S(18), "-", KP_TXT, KP_BTN, KPHIT_OT_RISK, 0, "", 7.6, false);
+      KPC_Fill(vx0 + KP_S(20), y, KP_S(66), KP_S(18), KP_BG_INPUT);
+      KPC_Frame(vx0 + KP_S(20), y, KP_S(66), KP_S(18), KP_SEP);
+      KPC_Num(vx0 + KP_S(53), y + KP_S(3), DoubleToString(g_ot_risk, 2) + "%", KP_AMBER, 7.6, 1, true);
+      KPC_Button(vx0 + KP_S(88), y, KP_S(18), KP_S(18), "+", KP_TXT, KP_BTN, KPHIT_OT_RISK, 1, "", 7.6, false);
+      double rpre[4] = {0.25, 0.50, 1.00, 2.00};
+      for(int i=0; i<4; i++)
+        {
+         bool on = (MathAbs(g_ot_risk - rpre[i]) < 0.0000001);
+         KPU_Chip(vx0 + KP_S(112) + i*KP_S(48), y + KP_S(1), KP_S(44), KP_S(16),
+                  DoubleToString(rpre[i], 2) + "%", on, KPHIT_OT_RISKPRE, i, 6.0);
+        }
      }
    KPC_Num(px + cw, y + KP_S(4),
            StringFormat("MIN %s STEP %s", DoubleToString(vmin, 2), DoubleToString(vstep, 2)),
@@ -513,22 +653,78 @@ void KPU_DrawOrder(const int W, const int y0)
    KPC_Button(tx + KP_S(128), y, KP_S(18), KP_S(18), "+", KP_TXT, KP_BTN, KPHIT_OT_TP, 1, "", 7.6, false);
    y += KP_S(24);
 
-   //-- market buttons
-   int bw2 = cw/2 - KP_S(3);
-   KPC_Fill(px, y, bw2, KP_S(34), KP_RED_DIM);
-   KPC_Frame(px, y, bw2, KP_S(34), KP_RED);
-   KPC_Lbl(px + bw2/2, y + KP_S(4), LL("SELL", "卖出 SELL"), KP_TXT, 7.4, 1, true);
-   KPC_Num(px + bw2/2, y + KP_S(19), (has_tk ? DoubleToString(tk.bid, dg) : "--"),
-           KP_RED, 7.4, 1, true);
-   KPC_AddHit(px, y, bw2, KP_S(34), KPHIT_OT_SELL, 0);
+   //-- sizing readout: what will actually be sent
+   if(g_ot_mode == 1)
+     {
+      if(g_ot_sl <= 0)
+         KPC_Lbl(px, y + KP_S(1), LL("RISK MODE NEEDS SL POINTS > 0",
+                 "风险模式需要先设置止损点数"), KP_YELLOW, 6.4, 0, true);
+      else
+        {
+         double rmoney = g_acc.equity * g_ot_risk / 100.0;
+         double rr = 0;
+         double rl = KPT_RiskLots(g_ot_symbol, 0, rmoney, g_ot_sl, rr);
+         if(rl <= 0)
+            KPC_Lbl(px, y + KP_S(1), LL("RISK TOO SMALL FOR MIN LOT",
+                    "风险额不足以开出最小手数"), KP_RED, 6.4, 0, true);
+         else
+            KPC_Num(px, y + KP_S(1),
+                    StringFormat("-> %s %s  =  %s %s (%.2f%%)",
+                    DoubleToString(rl, (vstep > 0 && vstep < 0.01 ? 3 : 2)), LL("LOTS", "手"),
+                    KP_Money(rr), g_acc.currency,
+                    (g_acc.equity > 0 ? rr / g_acc.equity * 100.0 : 0.0)),
+                    KP_AMBER, 6.6, 0, true);
+        }
+     }
+   else
+     {
+      double per = (g_ot_sl > 0 ? KPT_MoneyPerLot(g_ot_symbol, 0, g_ot_sl) : 0.0);
+      if(per > 0)
+         KPC_Num(px, y + KP_S(1),
+                 StringFormat("%s %s %s (%.2f%%)", LL("RISK AT SL", "止损处风险"),
+                 KP_Money(per * g_ot_lots), g_acc.currency,
+                 (g_acc.equity > 0 ? per * g_ot_lots / g_acc.equity * 100.0 : 0.0)),
+                 KP_TXT_DIM, 6.4);
+      else
+         KPC_Lbl(px, y + KP_S(1), LL("SL 0 = UNDEFINED RISK", "止损为 0 = 风险未定义"),
+                 KP_TXT_FAINT, 6.2);
+     }
+   if(g_prop.on)
+      KPC_Num(px + cw, y + KP_S(1),
+              LL("DAY BUDGET ", "日内余量 ") + KP_Money(KPT_DayBudgetLeft(), 0),
+              (KPT_DayBudgetLeft() <= 0.2 * g_prop.daily ? KP_RED : KP_TXT_DIM), 6.4, 2);
+   y += KP_S(18);
 
-   int bx2 = px + cw - bw2;
-   KPC_Fill(bx2, y, bw2, KP_S(34), KP_GREEN_DIM);
-   KPC_Frame(bx2, y, bw2, KP_S(34), KP_GREEN);
-   KPC_Lbl(bx2 + bw2/2, y + KP_S(4), LL("BUY", "买入 BUY"), KP_TXT, 7.4, 1, true);
-   KPC_Num(bx2 + bw2/2, y + KP_S(19), (has_tk ? DoubleToString(tk.ask, dg) : "--"),
-           KP_GREEN, 7.4, 1, true);
-   KPC_AddHit(bx2, y, bw2, KP_S(34), KPHIT_OT_BUY, 0);
+   //-- market buttons (greyed with countdown while lockout is active)
+   bool locked = KPT_Locked();
+   int bw2 = cw/2 - KP_S(3);
+   if(locked)
+     {
+      KPC_Fill(px, y, cw, KP_S(34), KP_BTN);
+      KPC_Frame(px, y, cw, KP_S(34), KP_SEP);
+      KPC_Lbl(px + cw/2, y + KP_S(4),
+              LL("ORDERS LOCKED — DAILY LOSS LIMIT", "下单已锁定 — 触发当日亏损上限"),
+              KP_RED, 7.2, 1, true);
+      KPC_Num(px + cw/2, y + KP_S(19),
+              LL("UNLOCKS IN ", "解锁倒计时 ") + KPT_LockLeft(), KP_AMBER, 7.0, 1, true);
+     }
+   else
+     {
+      KPC_Fill(px, y, bw2, KP_S(34), KP_RED_DIM);
+      KPC_Frame(px, y, bw2, KP_S(34), KP_RED);
+      KPC_Lbl(px + bw2/2, y + KP_S(4), LL("SELL", "卖出 SELL"), KP_TXT, 7.4, 1, true);
+      KPC_Num(px + bw2/2, y + KP_S(19), (has_tk ? DoubleToString(tk.bid, dg) : "--"),
+              KP_RED, 7.4, 1, true);
+      KPC_AddHit(px, y, bw2, KP_S(34), KPHIT_OT_SELL, 0);
+
+      int bx2 = px + cw - bw2;
+      KPC_Fill(bx2, y, bw2, KP_S(34), KP_GREEN_DIM);
+      KPC_Frame(bx2, y, bw2, KP_S(34), KP_GREEN);
+      KPC_Lbl(bx2 + bw2/2, y + KP_S(4), LL("BUY", "买入 BUY"), KP_TXT, 7.4, 1, true);
+      KPC_Num(bx2 + bw2/2, y + KP_S(19), (has_tk ? DoubleToString(tk.ask, dg) : "--"),
+              KP_GREEN, 7.4, 1, true);
+      KPC_AddHit(bx2, y, bw2, KP_S(34), KPHIT_OT_BUY, 0);
+     }
    y += KP_S(40);
 
    //-- pending row
@@ -545,8 +741,15 @@ void KPU_DrawOrder(const int W, const int y0)
      {
       int pbx = px + KP_S(170) + i*(pbw + KP_S(3));
       bool pbuy = (i == 0 || i == 2);
-      KPC_Button(pbx, y, pbw, KP_S(18), pn[i],
-                 (pbuy ? KP_GREEN : KP_RED), KP_BTN, KPHIT_OT_PEND, i, "", 6.4);
+      if(locked)
+        {
+         KPC_Fill(pbx, y, pbw, KP_S(18), KP_BTN);
+         KPC_Frame(pbx, y, pbw, KP_S(18), KP_SEP);
+         KPC_Lbl(pbx + pbw/2, y + KP_S(3), pn[i], KP_TXT_FAINT, 6.4, 1);
+        }
+      else
+         KPC_Button(pbx, y, pbw, KP_S(18), pn[i],
+                    (pbuy ? KP_GREEN : KP_RED), KP_BTN, KPHIT_OT_PEND, i, "", 6.4);
      }
    y += KP_S(24);
 
@@ -596,12 +799,19 @@ void KPU_DrawRisk(const int W, const int y0)
 
    KPC_Fill(px, y, cw, KP_S(20), KP_BG_THEAD);
    int ry0 = y + KP_S(4);
-   KPC_Lbl(px + KP_S(6), ry0, LL("FLOAT", "浮动盈亏"), KP_TXT_DIM, 6.4);
-   KPC_Num(px + KP_S(126), ry0, KP_MoneySigned(g_acc.floating_pl),
+   KPC_Lbl(px + KP_S(6), ry0, LL("FLOAT", "浮动"), KP_TXT_DIM, 6.4);
+   KPC_Num(px + KP_S(112), ry0, KP_MoneySigned(g_acc.floating_pl),
            KP_PLColor(g_acc.floating_pl), 7.0, 2, true);
-   KPC_Lbl(px + KP_S(156), ry0, LL("EQUITY", "净值"), KP_TXT_DIM, 6.4);
-   KPC_Num(px + KP_S(266), ry0, KP_Money(g_acc.equity), KP_TXT, 7.0, 2, true);
-   KPC_Lbl(px + KP_S(296), ry0, LL("POS", "持仓"), KP_TXT_DIM, 6.4);
+   KPC_Lbl(px + KP_S(140), ry0, LL("DAY", "当日"), KP_TXT_DIM, 6.4);
+   KPC_Num(px + KP_S(246), ry0, KP_MoneySigned(KPT_DayPL()),
+           KP_PLColor(KPT_DayPL()), 7.0, 2, true);
+   KPC_Lbl(px + KP_S(274), ry0, LL("BUDGET", "日内余量"), KP_TXT_DIM, 6.4);
+   double bleft = KPT_DayBudgetLeft();
+   KPC_Num(px + KP_S(420), ry0, (g_prop.on ? KP_Money(bleft, 0) : "--"),
+           (!g_prop.on ? KP_TXT_FAINT :
+            bleft <= 0.2 * g_prop.daily ? KP_RED :
+            bleft <= 0.5 * g_prop.daily ? KP_YELLOW : KP_GREEN), 7.0, 2, true);
+   KPC_Lbl(px + cw - KP_S(56), ry0, LL("POS", "持仓"), KP_TXT_DIM, 6.4);
    KPC_Num(px + cw - KP_S(8), ry0, (string)g_acc.positions,
            (g_acc.positions > 0 ? KP_CYAN : KP_TXT_FAINT), 7.0, 2, true);
    y += KP_S(25);
@@ -629,10 +839,19 @@ void KPU_DrawRisk(const int W, const int y0)
                g_risk.time_on,
                StringFormat("%02d:%02d", g_risk.time_hh, g_risk.time_mm), 3);
    y += KP_S(44) + gap;
+   KPU_RiskRow(px, cw, y, LL("DAILY LOSS", "当日亏损"),
+               (KPT_Locked() ?
+                LL("LOCKED — orders blocked, unlocks in ", "已锁定 — 下单禁止, 解锁还需 ")
+                   + KPT_LockLeft() :
+                StringFormat(LL("Day P&L since %02d:00 (incl. float) <= -%s: close all + lock orders",
+                                "当日盈亏(自%02d:00, 含浮动) ≤ -%s: 全平并锁定下单至重置"),
+                             KP_ResetHour, KP_Money(g_prop.daily, 0))),
+               g_prop.on, "-" + KP_Money(g_prop.daily, 0), 4);
+   y += KP_S(44) + gap;
 
    KPC_Lbl(px, y + KP_S(2),
-           LL("Guards disarm automatically after firing; re-enable manually.",
-              "以上开关均为一次性: 触发执行后自动关闭, 需手动重新开启"),
+           LL("Guards 1-4 disarm after firing. DAILY LOSS stays armed daily; toggling it OFF clears an active lockout.",
+              "前四项触发后自动关闭; 当日亏损为每日常驻, 关闭该开关可解除锁定"),
            KP_TXT_FAINT, 6.0);
   }
 
@@ -696,8 +915,34 @@ void KPU_DrawNews(const int W, const int y0)
      }
    y += KP_S(18);
 
+   // row 4: trade guard around events
+   KPU_Chip(px, y, KP_S(76), KP_S(16),
+            LL(g_ng_block_on ? "BLOCK ON" : "BLOCK OFF",
+               g_ng_block_on ? "拦截 开" : "拦截 关"),
+            g_ng_block_on, KPHIT_NG_BLOCK, 0, 6.0);
+   KPU_Chip(px + KP_S(80), y, KP_S(76), KP_S(16),
+            LL(g_ng_flat_on ? "FLAT ON" : "FLAT OFF",
+               g_ng_flat_on ? "避险 开" : "避险 关"),
+            g_ng_flat_on, KPHIT_NG_FLAT, 0, 6.0);
+   int gx0 = px + KP_S(168);
+   KPC_Lbl(gx0, y + KP_S(3), LL("PRE", "前"), KP_TXT_FAINT, 6.0);
+   KPC_Button(gx0 + KP_S(24), y, KP_S(14), KP_S(16), "-", KP_TXT, KP_BTN, KPHIT_NG_BEFORE, 0, "", 6.8, false);
+   KPC_Num(gx0 + KP_S(54), y + KP_S(3), (string)g_ng_before + "M", KP_TXT, 6.2, 1);
+   KPC_Button(gx0 + KP_S(70), y, KP_S(14), KP_S(16), "+", KP_TXT, KP_BTN, KPHIT_NG_BEFORE, 1, "", 6.8, false);
+   int gx1 = gx0 + KP_S(96);
+   KPC_Lbl(gx1, y + KP_S(3), LL("POST", "后"), KP_TXT_FAINT, 6.0);
+   KPC_Button(gx1 + KP_S(30), y, KP_S(14), KP_S(16), "-", KP_TXT, KP_BTN, KPHIT_NG_AFTER, 0, "", 6.8, false);
+   KPC_Num(gx1 + KP_S(60), y + KP_S(3), (string)g_ng_after + "M", KP_TXT, 6.2, 1);
+   KPC_Button(gx1 + KP_S(76), y, KP_S(14), KP_S(16), "+", KP_TXT, KP_BTN, KPHIT_NG_AFTER, 1, "", 6.8, false);
+   if(cw >= KP_S(560))
+      KPC_Lbl(px + cw, y + KP_S(3),
+              LL("GUARD: block entries / auto-flat exposed symbols",
+                 "护盾: 事件窗拦截开单 / 提前平掉相关货币持仓"),
+              KP_TXT_FAINT, 5.8, 2);
+   y += KP_S(18);
+
    // table head
-   int c_tm = KP_S(64), c_cur = KP_S(36), c_imp = KP_S(14);
+   int c_tm = KP_S(74), c_cur = KP_S(36), c_imp = KP_S(14);
    int c_pv = KP_S(56), c_fc = KP_S(56), c_ac = KP_S(56);
    int c_nm = cw - c_tm - c_cur - c_imp - c_pv - c_fc - c_ac;
    KPC_Fill(px, y, cw, KP_S(KPL_THEAD), KP_BG_THEAD);
@@ -875,6 +1120,23 @@ bool KPU_OnClick(const int lx, const int ly)
                   g_risk_last_timeclose = day;
               }
            }
+         if(which == 4)
+           {
+            g_prop.on = !g_prop.on;
+            if(g_prop.on && g_last_rebuild >= KP_ResetAnchor(TimeCurrent()) &&
+               KPT_DayPL() <= -MathAbs(g_prop.daily))
+              {
+               // already beyond the limit when armed: lock new orders
+               // only, leave existing positions untouched
+               g_prop.lock_until = KP_ResetAnchor(TimeCurrent()) + 86400;
+               KPT_DeletePendings();
+               KPT_RiskMsg(LL("Armed beyond limit: orders locked, positions untouched",
+                              "武装时已超限: 仅锁定下单, 不动持仓"));
+              }
+            if(!g_prop.on)
+               g_prop.lock_until = 0;   // explicit disarm clears the lockout
+            KPT_PropSave();
+           }
          KPT_RiskSave();
          return true;
         }
@@ -886,6 +1148,11 @@ bool KPU_OnClick(const int lx, const int ly)
          if(which == 0) g_risk.sl_val    = MathMax(50.0, g_risk.sl_val    + dir*50.0);
          if(which == 1) g_risk.tp_val    = MathMax(50.0, g_risk.tp_val    + dir*50.0);
          if(which == 2) g_risk.floor_val = MathMax(0.0,  g_risk.floor_val + dir*100.0);
+         if(which == 4)
+           {
+            g_prop.daily = MathMax(50.0, g_prop.daily + dir * 50.0);
+            KPT_PropSave();
+           }
          if(which == 3)
            {
             int tm = g_risk.time_hh * 60 + g_risk.time_mm + dir * 15;
@@ -941,6 +1208,76 @@ bool KPU_OnClick(const int lx, const int ly)
          KPN_UpdateMarks();
          return true;
 
+      case KPHIT_NG_BLOCK:
+         g_ng_block_on = !g_ng_block_on;
+         KPN_SaveSettings();
+         return true;
+
+      case KPHIT_NG_FLAT:
+         g_ng_flat_on = !g_ng_flat_on;
+         KPN_SaveSettings();
+         return true;
+
+      case KPHIT_NG_BEFORE:
+         g_ng_before = (int)MathMax(1, MathMin(120,
+                       g_ng_before + ((int)arg == 1 ? 5 : -5)));
+         KPN_SaveSettings();
+         return true;
+
+      case KPHIT_NG_AFTER:
+         g_ng_after = (int)MathMax(0, MathMin(120,
+                      g_ng_after + ((int)arg == 1 ? 5 : -5)));
+         KPN_SaveSettings();
+         return true;
+
+      case KPHIT_EXPORT:
+         KPX_Export();
+         return true;
+
+      case KPHIT_AT_BE:
+         KPT_BE((ulong)arg, KPT_BEBuf);
+         KPData_UpdateLive();
+         return true;
+
+      case KPHIT_AT_TR:
+         KPT_TrailSet((ulong)arg, !KPT_TrailOn((ulong)arg));
+         return true;
+
+      case KPHIT_AT_HALF:
+         KPT_Half((ulong)arg);
+         KPData_UpdateAccount();
+         KPData_UpdateLive();
+         return true;
+
+      case KPHIT_AT_BEALL:
+        {
+         int n = 0;
+         for(int i=0; i<g_live_count; i++)
+            if(KPT_BE(g_live[i].ticket, KPT_BEBuf))
+               n++;
+         KPT_RiskMsg(StringFormat(LL("BE applied to %d", "保本已应用 %d 单"), n));
+         KPData_UpdateLive();
+         return true;
+        }
+
+      case KPHIT_AT_TRALL:
+        {
+         bool any_off = false;
+         for(int i=0; i<g_live_count; i++)
+            if(!KPT_TrailOn(g_live[i].ticket)) { any_off = true; break; }
+         for(int i=0; i<g_live_count; i++)
+            KPT_TrailSet(g_live[i].ticket, any_off);
+         KPT_RiskMsg(any_off ? LL("Trailing armed for all", "全部持仓已开启追踪")
+                             : LL("Trailing disarmed for all", "全部持仓已关闭追踪"));
+         return true;
+        }
+
+      case KPHIT_AT_TRSTEP:
+         KPT_TrailPts = (int)MathMax(20, MathMin(5000,
+                        KPT_TrailPts + ((int)arg == 1 ? 20 : -20)));
+         KP_StoreSet("at_trail", KPT_TrailPts);
+         return true;
+
       case KPHIT_NEWSCUR:
         {
          int nm = g_news_curmask ^ (1 << (int)arg);
@@ -986,6 +1323,25 @@ bool KPU_OnClick(const int lx, const int ly)
          return true;
         }
 
+      case KPHIT_OT_MODE:
+         g_ot_mode = ((int)arg == 1 ? 1 : 0);
+         KP_StoreSet("ot_mode", g_ot_mode);
+         return true;
+
+      case KPHIT_OT_RISK:
+         g_ot_risk = MathMax(0.25, MathMin(10.0,
+                     g_ot_risk + ((int)arg == 1 ? 0.25 : -0.25)));
+         KP_StoreSet("ot_risk", g_ot_risk);
+         return true;
+
+      case KPHIT_OT_RISKPRE:
+        {
+         double rpre[4] = {0.25, 0.50, 1.00, 2.00};
+         g_ot_risk = rpre[(int)arg];
+         KP_StoreSet("ot_risk", g_ot_risk);
+         return true;
+        }
+
       case KPHIT_OT_SL:
          g_ot_sl = MathMax(0, g_ot_sl + ((int)arg == 1 ? 50 : -50));
          KP_StoreSet("ot_sl", g_ot_sl);
@@ -1004,17 +1360,47 @@ bool KPU_OnClick(const int lx, const int ly)
       case KPHIT_OT_BUY:
       case KPHIT_OT_SELL:
       case KPHIT_OT_PEND:
+        {
          // one-click execution: a confirm step only costs slippage
+         int pdir = (id == KPHIT_OT_SELL ? 1 :
+                     id == KPHIT_OT_BUY  ? 0 :
+                     ((int)arg == 0 || (int)arg == 2 ? 0 : 1));
+         double use_lots = g_ot_lots;
+         if(g_ot_mode == 1)
+           {
+            if(g_ot_sl <= 0)
+              {
+               KPT_RiskMsg(LL("Risk mode needs SL points > 0",
+                              "风险模式需要止损点数 > 0"));
+               return true;
+              }
+            double rmoney = g_acc.equity * g_ot_risk / 100.0;
+            if(g_prop.on && rmoney > KPT_DayBudgetLeft())
+              {
+               KPT_RiskMsg(LL("Risk exceeds day budget ", "风险超出日内余量 ")
+                           + KP_Money(KPT_DayBudgetLeft(), 0));
+               return true;
+              }
+            double rr = 0;
+            use_lots = KPT_RiskLots(g_ot_symbol, pdir, rmoney, g_ot_sl, rr);
+            if(use_lots <= 0)
+              {
+               KPT_RiskMsg(LL("Risk too small for min lot",
+                              "风险额不足以开出最小手数"));
+               return true;
+              }
+           }
          if(id == KPHIT_OT_BUY)
-            KPT_Market(g_ot_symbol, 0, g_ot_lots, g_ot_sl, g_ot_tp);
+            KPT_Market(g_ot_symbol, 0, use_lots, g_ot_sl, g_ot_tp);
          else if(id == KPHIT_OT_SELL)
-            KPT_Market(g_ot_symbol, 1, g_ot_lots, g_ot_sl, g_ot_tp);
+            KPT_Market(g_ot_symbol, 1, use_lots, g_ot_sl, g_ot_tp);
          else
-            KPT_Pending(g_ot_symbol, (int)arg, g_ot_lots, g_ot_dist,
+            KPT_Pending(g_ot_symbol, (int)arg, use_lots, g_ot_dist,
                         g_ot_sl, g_ot_tp);
          KPData_UpdateAccount();
          KPData_UpdateLive();
          return true;
+        }
      }
    return false;
   }
@@ -1047,7 +1433,7 @@ bool KPU_OnMouse(const int cx, const int cy, const uint flags)
          return false;
       int lx = cx - g_panel_x;
       int ly = cy - g_panel_y;
-      if(lx >= 0 && ly >= 0 && lx < KPU_PanelW() - KP_S(84) && ly < KP_S(KPL_HDR))
+      if(lx >= 0 && ly >= 0 && lx < KPU_PanelW() - KP_S(112) && ly < KP_S(KPL_HDR))
         {
          g_dragging = true;
          g_drag_dx = lx;

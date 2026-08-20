@@ -23,7 +23,7 @@ struct KPHit
    long              arg;
    string            sarg;
   };
-KPHit g_hits[192];
+KPHit g_hits[512];
 int   g_hit_count = 0;
 
 void KPC_ClearHits() { g_hit_count = 0; }
@@ -31,7 +31,7 @@ void KPC_ClearHits() { g_hit_count = 0; }
 void KPC_AddHit(const int x, const int y, const int w, const int h,
                 const int id, const long arg=0, const string sarg="")
   {
-   if(g_hit_count >= 192)
+   if(g_hit_count >= 512)
       return;
    g_hits[g_hit_count].x = x;  g_hits[g_hit_count].y = y;
    g_hits[g_hit_count].w = w;  g_hits[g_hit_count].h = h;

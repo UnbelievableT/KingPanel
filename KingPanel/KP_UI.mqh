@@ -8,8 +8,11 @@
 #include "KP_Theme.mqh"
 #include "KP_Canvas.mqh"
 #include "KP_Data.mqh"
-#include "KP_Trade.mqh"
 #include "KP_News.mqh"
+#include "KP_Trade.mqh"
+#include "KP_Export.mqh"
+#include "KP_Tg.mqh"
+#include "KP_Fleet.mqh"
 
 //--- hit ids ---------------------------------------------------------
 #define KPHIT_COLLAPSE   1
@@ -46,6 +49,20 @@
 #define KPHIT_OT_BUY     36
 #define KPHIT_OT_SELL    37
 #define KPHIT_OT_PEND    38
+#define KPHIT_OT_MODE    39
+#define KPHIT_OT_RISK    40
+#define KPHIT_OT_RISKPRE 41
+#define KPHIT_AT_BE      42
+#define KPHIT_AT_TR      43
+#define KPHIT_AT_HALF    44
+#define KPHIT_AT_BEALL   45
+#define KPHIT_AT_TRALL   46
+#define KPHIT_AT_TRSTEP  47
+#define KPHIT_NG_BLOCK   48
+#define KPHIT_NG_FLAT    49
+#define KPHIT_NG_BEFORE  50
+#define KPHIT_NG_AFTER   51
+#define KPHIT_EXPORT     52
 
 //--- ui state --------------------------------------------------------
 int    g_tab        = 0;      // 0..7
@@ -66,6 +83,8 @@ double g_ot_lots    = 0.0;    // 0 = init from symbol minimum
 int    g_ot_sl      = 0;      // points, 0 = none
 int    g_ot_tp      = 0;      // points, 0 = none
 int    g_ot_dist    = 200;    // pending distance, points
+int    g_ot_mode    = 0;      // sizing: 0 = fixed lots, 1 = risk %
+double g_ot_risk    = 1.0;    // risk per trade, % of equity
 
 bool   g_dragging   = false;
 int    g_drag_dx    = 0;
@@ -127,7 +146,8 @@ int KPU_VisRows(const int slot)
       case 1:            ovh = 64;  break;   // analysis: selector+head+summary
       case 2: case 3:    ovh = 63;  break;   // agg: section+head+footer line
       case 4: case 8:    ovh = 96;  break;   // trade: summary+ops+subtabs+head
-      case 7:            ovh = 109; break;   // news: 2 toolbars+currencies+head+countdown
+      case 7:            ovh = 127; break;   // news: 3 toolbars+currencies+head+countdown
+      case 9:            ovh = 96;  break;   // fleet accounts list
      }
    if(g_content_h <= 0)
       return 12;
@@ -200,7 +220,7 @@ void KPU_DrawHeader(const int W)
    KPC_Text(lx + KP_S(7), KP_S(6), "K", KP_BG, KP_FontMono, 8.6, 1, true);
    KPC_Text(lx + KP_S(20), KP_S(4), "KING PANEL", KP_TXT, KP_FontMono, 8.6, 0, true);
    int tw = KPC_TextW("KING PANEL", KP_FontMono, 8.6, true);
-   KPC_Text(lx + KP_S(26) + tw, KP_S(7), "V1.2", KP_AMBER, KP_FontMono, 6.6, 0, true);
+   KPC_Text(lx + KP_S(26) + tw, KP_S(7), "V1.4", KP_AMBER, KP_FontMono, 6.6, 0, true);
 
    // collapse button
    int bx = W - KP_S(24), bw = KP_S(17);
@@ -213,6 +233,13 @@ void KPU_DrawHeader(const int W)
    uint ac = (g_acc.algo_ok ? KP_GREEN : KP_RED);
    KPC_Fill(W - KP_S(37), KP_S(9), KP_S(6), KP_S(6), ac);
 
+   // export button
+   int ex2 = W - KP_S(104), ew2 = KP_S(30);
+   KPC_Fill(ex2, KP_S(4), ew2, KP_S(16), KP_BTN);
+   KPC_Frame(ex2, KP_S(4), ew2, KP_S(16), KP_SEP);
+   KPC_Text(ex2 + ew2/2, KP_S(7), "EXP", KP_TXT_DIM, KP_FontMono, 6.4, 1);
+   KPC_AddHit(ex2, 0, ew2, h, KPHIT_EXPORT);
+
    // language toggle
    int gx = W - KP_S(70), gw = KP_S(26);
    KPC_Fill(gx, KP_S(4), gw, KP_S(16), KP_BTN);
@@ -223,7 +250,7 @@ void KPU_DrawHeader(const int W)
 
    // brand: telegram channel, understated
    if(KP_BrandShow)
-      KPC_Text(W - KP_S(76), KP_S(7), KP_BrandChannel, KP_TXT_FAINT,
+      KPC_Text(W - KP_S(110), KP_S(7), KP_BrandChannel, KP_TXT_FAINT,
                KP_FontMono, 6.4, 2);
   }
 
@@ -250,10 +277,20 @@ void KPU_DrawAccStrip(const int W, const int y0)
 
    KPC_Num(x, ty, g_acc.currency, KP_TXT_DIM, 7.0);
 
-   string ps = StringFormat(LL("POS %d · ORD %d", "持仓 %d · 挂单 %d"),
-                            g_acc.positions, g_acc.pendings);
-   KPC_Lbl(W - KP_S(8), ty, ps,
-           (g_acc.positions > 0 ? KP_CYAN : KP_TXT_FAINT), 6.6, 2);
+   if(KPT_Locked())
+      KPC_Lbl(W - KP_S(8), ty, LL("LOCKED ", "已锁定 ") + KPT_LockLeft(),
+              KP_RED, 6.6, 2, true);
+   else if(g_prop.on && KPT_DayBudgetLeft() <= 0.2 * g_prop.daily)
+      KPC_Lbl(W - KP_S(8), ty,
+              LL("BUDGET ", "日内余量 ") + KP_Money(KPT_DayBudgetLeft(), 0),
+              KP_YELLOW, 6.6, 2, true);
+   else
+     {
+      string ps = StringFormat(LL("POS %d · ORD %d", "持仓 %d · 挂单 %d"),
+                               g_acc.positions, g_acc.pendings);
+      KPC_Lbl(W - KP_S(8), ty, ps,
+              (g_acc.positions > 0 ? KP_CYAN : KP_TXT_FAINT), 6.6, 2);
+     }
   }
 
 //--- tab bar ---------------------------------------------------------
@@ -508,270 +545,7 @@ void KPU_DrawOverview(const int W, const int y0)
    KPC_VLine(px + seg*2 + KP_S(2), y + KP_S(4), y + wh - KP_S(4), KP_SEP);
   }
 
-//--- charts modal ----------------------------------------------------
-void KPU_DrawModal(const int W, const int y0)
-  {
-   int px = KP_S(KPL_PAD);
-   int cw = W - 2*px;
-   int y  = y0 + KP_S(4);
-
-   // title + close
-   KPC_Fill(px, y + KP_S(2), KP_S(3), KP_S(10), KP_AMBER);
-   KPC_Lbl(px + KP_S(8), y, LL("CHART CENTER", "图表中心"), KP_AMBER, 7.4, 0, true);
-   int cx = px + cw - KP_S(17);
-   KPC_Fill(cx, y, KP_S(17), KP_S(15), KP_BTN);
-   KPC_Frame(cx, y, KP_S(17), KP_S(15), KP_SEP);
-   KPC_Num(cx + KP_S(8), y + KP_S(1), "×", KP_RED, 8.0, 1, true);
-   KPC_AddHit(cx, y, KP_S(17), KP_S(15), KPHIT_EXPAND);
-   y += KP_S(20);
-
-   // selector
-   string cn[5];
-   cn[0] = LL("EQUITY", "资金曲线");
-   cn[1] = LL("DAILY", "日盈亏");
-   cn[2] = LL("MONTHLY", "月盈亏");
-   cn[3] = LL("DRAWDOWN", "回撤");
-   cn[4] = "MFE/MAE";
-   int sw = KP_S(80);
-   for(int i=0; i<5; i++)
-      KPU_Chip(px + i*(sw + KP_S(4)), y, sw, KP_S(16), cn[i],
-               g_chart_sel == i, KPHIT_CHARTSEL, i, 6.2);
-   y += KP_S(22);
-
-   // plot area (stretches with the window)
-   int lab_w = KP_S(58);
-   int pw = cw - lab_w;
-   int ph = MathMax(KP_S(180), g_content_h - KP_S(80));
-   KPC_Fill(px, y, cw, ph, KP_BG_CELL);
-   KPC_Frame(px, y, cw, ph, KP_SEP);
-   for(int i=1; i<4; i++)
-      KPC_HDot(px+1, px+pw-2, y + ph*i/4, KP_SEP);
-
-   int ix = px + KP_S(4), iy = y + KP_S(4);
-   int iw = pw - KP_S(8), ih = ph - KP_S(8);
-   string xl0 = "", xl1 = "", xl2 = "";     // x labels
-   string sum = "";
-   double mn = 0, mx = 0;
-   bool has = false;
-   bool own_axes = false;
-
-   if(g_chart_sel == 0 && g_curve_n >= 2)
-     {
-      KPC_Spark(ix, iy, iw, ih, g_curve_bal, g_curve_n, KP_AMBER, KP_CURVE_FILL);
-      mn = g_curve_bal[ArrayMinimum(g_curve_bal, 0, g_curve_n)];
-      mx = g_curve_bal[ArrayMaximum(g_curve_bal, 0, g_curve_n)];
-      xl0 = KP_DateOnly(g_curve_t[0]);
-      xl1 = KP_DateOnly(g_curve_t[g_curve_n/2]);
-      xl2 = KP_DateOnly(g_curve_t[g_curve_n-1]);
-      sum = StringFormat("%s %s   %s %s   %s %s",
-            LL("HIGH", "最高"), KP_Money(mx, 0),
-            LL("LOW", "最低"), KP_Money(mn, 0),
-            LL("LAST", "当前"), KP_Money(g_curve_bal[g_curve_n-1], 0));
-      // labels must match the padded scale Spark actually plots with
-        {
-         double pad = (mx - mn) * 0.07;
-         mx += pad;
-         mn -= pad;
-        }
-      has = true;
-     }
-   else if(g_chart_sel == 1 || g_chart_sel == 2)
-     {
-      int nsrc = (g_chart_sel == 1 ? ArraySize(g_days) : ArraySize(g_months));
-      int take = MathMin(nsrc, (g_chart_sel == 1 ? 60 : 36));
-      if(take >= 1)
-        {
-         double vals[];
-         ArrayResize(vals, take);
-         double best = 0, worst = 0, tot = 0;
-         for(int i=0; i<take; i++)
-           {
-            double v = (g_chart_sel == 1 ? g_days[nsrc-take+i].profit
-                                         : g_months[nsrc-take+i].profit);
-            vals[i] = v;
-            tot += v;
-            if(v > best)  best = v;
-            if(v < worst) worst = v;
-           }
-         KPC_Bars(ix, iy, iw, ih, vals, take, KP_GREEN, KP_RED, KP_TXT_FAINT);
-         // labels must match KPC_Bars' scale, which always includes zero
-         mn = MathMin(0.0, worst);
-         mx = MathMax(0.0, best);
-         xl0 = (g_chart_sel == 1 ? g_days[nsrc-take].label : g_months[nsrc-take].label);
-         xl2 = (g_chart_sel == 1 ? g_days[nsrc-1].label : g_months[nsrc-1].label);
-         sum = StringFormat("%d %s   %s %s   %s %s   %s %s",
-               take, LL(g_chart_sel == 1 ? "DAYS" : "MONTHS",
-                        g_chart_sel == 1 ? "天" : "个月"),
-               LL("BEST", "最佳"), KP_MoneySigned(best, 0),
-               LL("WORST", "最差"), KP_MoneySigned(worst, 0),
-               LL("SUM", "合计"), KP_MoneySigned(tot, 0));
-         has = true;
-        }
-     }
-   else if(g_chart_sel == 3 && g_curve_n >= 2)
-     {
-      double uw[];
-      ArrayResize(uw, g_curve_n);
-      double peak = -DBL_MAX, peakbal = 0;
-      for(int i=0; i<g_curve_n; i++)
-        {
-         if(g_curve_trd[i] >= peak)
-           {
-            peak = g_curve_trd[i];
-            peakbal = g_curve_bal[i];
-           }
-         uw[i] = (peakbal > 0 ? -(peak - g_curve_trd[i]) / peakbal * 100.0 : 0.0);
-        }
-      KPC_Spark(ix, iy, iw, ih, uw, g_curve_n, KP_RED, KP_FILL_RED, true);
-      int mi = ArrayMinimum(uw, 0, g_curve_n);
-      mn = uw[mi];
-      mx = 0;
-      // deepest-point marker + tag
-      if(mn < -0.0000001)
-        {
-         int mpx = ix + (int)MathRound((double)mi * (iw-1) / (g_curve_n-1));
-         int mpy = iy + ih - 1;
-         g_cv.FillCircle(mpx, mpy - KP_S(2), 3, KP_YELLOW);
-         KPC_Num(MathMin(mpx + KP_S(6), ix + iw - KP_S(40)), mpy - KP_S(14),
-                 KP_Pct(-mn), KP_YELLOW, 6.6, 0, true);
-        }
-      xl0 = KP_DateOnly(g_curve_t[0]);
-      xl1 = KP_DateOnly(g_curve_t[g_curve_n/2]);
-      xl2 = KP_DateOnly(g_curve_t[g_curve_n-1]);
-      sum = StringFormat("%s %s (%s)   %s %s",
-            LL("MAX DD", "最大回撤"), KP_Money(g_tot.max_dd, 0),
-            KP_Pct(g_tot.max_dd_pct),
-            LL("NOW", "当前"), KP_Pct(-uw[g_curve_n-1]));
-      has = true;
-     }
-   else if(g_chart_sel == 4 && g_exc_n > 0)
-     {
-      // MFE x MAE scatter, symmetric money scale so the MFE=MAE diagonal
-      // is the true square diagonal and quadrants read at a glance
-      double m = 0, sf = 0, sa = 0, sn = 0;
-      int nwin = 0;
-      for(int i=0; i<g_exc_n; i++)
-        {
-         if(g_exc[i].mae > m) m = g_exc[i].mae;
-         if(g_exc[i].mfe > m) m = g_exc[i].mfe;
-         sf += g_exc[i].mfe;
-         sa += g_exc[i].mae;
-         sn += g_exc[i].net;
-         if(g_exc[i].net >= 0) nwin++;
-        }
-      if(m <= 0) m = 1;
-      m *= 1.06;
-
-      int side = MathMin(iw - KP_S(120), ih);   // leave room for legend
-      if(side < KP_S(120)) side = MathMin(iw, ih);
-      int sx0 = ix, sy0 = iy + (ih - side)/2;
-      int sx1 = sx0 + side - 1, sy1 = sy0 + side - 1;
-
-      // quadrant tints: above diagonal = favorable zone
-      g_cv.FillTriangle(sx0, sy1, sx1, sy0, sx0, sy0, KP_TINT_GREEN);
-      g_cv.FillTriangle(sx0, sy1, sx1, sy0, sx1, sy1, KP_TINT_RED);
-      // grid
-      for(int q=1; q<4; q++)
-        {
-         KPC_HDot(sx0, sx1, sy0 + side*q/4, KP_SEP);
-         KPC_VDot(sx0 + side*q/4, sy0, sy1, KP_SEP);
-        }
-      KPC_Frame(sx0, sy0, side, side, KP_SEP);
-      // diagonal MFE = MAE with 45-degree label
-      g_cv.Line(sx0, sy1, sx1, sy0, KP_TXT_FAINT);
-      g_cv.FontSet(KP_FontMono, KP_F(6.0), FW_NORMAL, 450);
-      g_cv.TextOut(sx0 + side/2 + KP_S(6), sy0 + side/2 - KP_S(6),
-                   "MFE=MAE", KP_TXT_FAINT, TA_CENTER|TA_TOP);
-      // dots: filled = win, ring = loss
-      for(int i=0; i<g_exc_n; i++)
-        {
-         int dx2 = sx0 + (int)(g_exc[i].mae / m * (side-1));
-         int dy2 = sy1 - (int)(g_exc[i].mfe / m * (side-1));
-         if(g_exc[i].net >= 0)
-            g_cv.FillCircle(dx2, dy2, 2, KP_GREEN);
-         else
-            g_cv.Circle(dx2, dy2, 2, KP_RED);
-        }
-      // own axes: labels aligned to the square, not the full plot box
-      KPC_Lbl(sx0 + KP_S(4), sy0 + KP_S(2), "MFE", KP_TXT_DIM, 6.2);
-      for(int q=0; q<5; q+=2)
-         KPC_Num(sx1 + KP_S(6), sy0 + side*q/4 - (q==0 ? 0 : KP_S(q==4 ? 12 : 6)),
-                 KP_Money(m - m*q/4.0, 0), KP_TXT_FAINT, 6.0);
-      // legend + key stats on the right
-      double avg_f = sf / g_exc_n, avg_a = sa / g_exc_n;
-      double eratio  = (avg_a > 0.0000001 ? avg_f / avg_a : 0.0);
-      double capture = (sf > 0.0000001 ? sn / sf * 100.0 : 0.0);
-      int lx0 = sx1 + KP_S(52);
-      int ly0 = sy0 + KP_S(6);
-      g_cv.FillCircle(lx0 + KP_S(3), ly0 + KP_S(5), 2, KP_GREEN);
-      KPC_Lbl(lx0 + KP_S(10), ly0, LL("WIN", "盈利单"), KP_TXT_DIM, 6.4);
-      ly0 += KP_S(14);
-      g_cv.Circle(lx0 + KP_S(3), ly0 + KP_S(5), 2, KP_RED);
-      KPC_Lbl(lx0 + KP_S(10), ly0, LL("LOSS", "亏损单"), KP_TXT_DIM, 6.4);
-      ly0 += KP_S(20);
-      KPC_Lbl(lx0, ly0, "E-RATIO", KP_TXT_FAINT, 6.2);
-      ly0 += KP_S(12);
-      KPC_Num(lx0, ly0, DoubleToString(eratio, 2),
-              (eratio >= 1.0 ? KP_GREEN : KP_RED), 11.0, 0, true);
-      ly0 += KP_S(26);
-      KPU_KV(lx0, ly0, KP_S(96), LL("AVG MFE", "均MFE"), KP_Money(avg_f, 0), KP_GREEN);
-      ly0 += KP_S(14);
-      KPU_KV(lx0, ly0, KP_S(96), LL("AVG MAE", "均MAE"), KP_Money(avg_a, 0), KP_RED);
-      ly0 += KP_S(14);
-      KPU_KV(lx0, ly0, KP_S(96), LL("CAPTURE", "兑现率"), KP_Pct(capture, 0),
-             (capture > 0 ? KP_AMBER : KP_TXT_DIM));
-      ly0 += KP_S(14);
-      KPU_KV(lx0, ly0, KP_S(96), LL("WIN/N", "盈/总"),
-             StringFormat("%d/%d", nwin, g_exc_n), KP_TXT);
-      // x labels aligned to the square edges
-      KPC_Num(sx0, y + ph + KP_S(4), "0", KP_TXT_FAINT, 6.2);
-      KPC_Lbl(sx0 + side/2, y + ph + KP_S(4),
-              LL("MAE (ADVERSE EXCURSION)", "MAE 最大不利波动"), KP_TXT_FAINT, 6.2, 1);
-      KPC_Num(sx1, y + ph + KP_S(4), KP_Money(m, 0), KP_TXT_FAINT, 6.2, 2);
-      int scope = MathMin(200, g_tot.closed_trades);
-      sum = StringFormat("%s %d/%d   %s",
-            LL("SAMPLE", "样本"), g_exc_n, scope,
-            LL("ABOVE DIAGONAL = MORE FAVORABLE THAN ADVERSE",
-               "对角线上方 = 顺风幅度大于逆风幅度, 点越靠左上越健康"));
-      own_axes = true;
-      has = true;
-     }
-
-   if(has && !own_axes)
-     {
-      // y labels: five ticks aligned to the quarter gridlines
-      int lx = px + pw + KP_S(4);
-      bool pct = (g_chart_sel == 3);
-      for(int q=0; q<5; q++)
-        {
-         double v = mx - (mx - mn) * q / 4.0;
-         int off = (q == 0 ? KP_S(2) : q == 4 ? -KP_S(13) : -KP_S(6));
-         uint c = (q % 2 == 0 ? KP_TXT_DIM : KP_TXT_FAINT);
-         KPC_Num(lx, y + ph*q/4 + off, (pct ? KP_Pct(v) : KP_Money(v, 0)), c, 6.2);
-        }
-     }
-   if(!has)
-      KPC_Lbl(px + cw/2, y + ph/2 - KP_S(7),
-              (g_chart_sel == 4 ?
-               LL("NO SAMPLE YET (M1 HISTORY LOADING)", "暂无样本 (M1 历史加载中)") :
-               LL("NO DATA", "暂无数据")),
-              KP_TXT_FAINT, 8.0, 1);
-   y += ph + KP_S(4);
-
-   // x labels + summary
-   if(has)
-     {
-      if(!own_axes)
-        {
-         KPC_Num(px, y, xl0, KP_TXT_FAINT, 6.2);
-         if(xl1 != "")
-            KPC_Lbl(px + pw/2, y, xl1, KP_TXT_FAINT, 6.2, 1);
-         KPC_Num(px + pw, y, xl2, KP_TXT_FAINT, 6.2, 2);
-        }
-      y += KP_S(14);
-      KPC_Lbl(px, y, sum, KP_TXT_DIM, 6.6);
-     }
-  }
+#include "KP_Charts.mqh"
 
 #include "KP_UI2.mqh"
 

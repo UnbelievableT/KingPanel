@@ -9,15 +9,16 @@
 //+------------------------------------------------------------------+
 #property copyright "KING PANEL"
 #property link      "https://t.me/topxea"
-#property version   "1.20"
+#property version   "1.40"
 #property description "KING PANEL — Bloomberg-terminal style MT5 account dashboard"
 #property description "Telegram @topxea"
+#property description "v1.4: position automation, news guard, chart center 2.0, export, telegram, fleet"
 
 #include "KP_Theme.mqh"
 #include "KP_Canvas.mqh"
 #include "KP_Data.mqh"
-#include "KP_Trade.mqh"
 #include "KP_News.mqh"
+#include "KP_Trade.mqh"
 #include "KP_UI.mqh"
 
 //--- inputs ----------------------------------------------------------
@@ -46,6 +47,29 @@ input string InpNewsCurs   = "USD,EUR,JPY";  // Default currencies (first load o
 input group "════ Order Ticket ════"
 input long   InpPanelMagic = 0;       // Magic for panel orders (0 = manual)
 
+input group "════ Notifications ════"
+input bool   InpPushOn     = true;    // Phone push via SendNotification (needs MetaQuotes ID)
+input bool   InpPushRisk   = true;    // Push on risk-guard / lockout events
+input bool   InpPushNews   = true;    // Push news alerts
+
+input group "════ Automation ════"
+input int    InpBEBuffer   = 20;      // Break-even buffer (points locked in)
+input int    InpTrailPts   = 200;     // Trailing distance default (points, first load)
+
+input group "════ Telegram (optional) ════"
+input string InpTgToken    = "";      // Bot token (empty = off; whitelist api.telegram.org)
+input string InpTgChat     = "";      // Chat id
+input bool   InpTgDaily    = true;    // Daily digest after the prop-day reset
+
+input group "════ Fleet / Aliases ════"
+input bool   InpFleetOn    = true;    // Publish snapshot for multi-account view
+input string InpMagicAliases = "";    // e.g. "12345=KING S1;678=Grid v2"
+
+input group "════ Prop Mode (first load only) ════"
+input bool   InpPropOn      = false;  // Daily-loss guard + order lockout armed by default
+input double InpDefDailyLoss = 500;   // Daily loss limit default (account currency)
+input int    InpPropResetHH  = 0;     // Daily reset hour (server time, 0-23)
+
 input group "════ Risk Defaults (first load only) ════"
 input double InpDefFloatSL = 500;     // Loss guard default (account currency)
 input double InpDefFloatTP = 500;     // Profit guard default (account currency)
@@ -72,6 +96,10 @@ int OnInit()
    KP_BrandShow    = InpShowBrand;
    KP_BrandChannel = InpChannel;
    KPT_PanelMagic  = InpPanelMagic;
+   KP_PushOn       = InpPushOn;
+   KP_PushRisk     = InpPushRisk;
+   KP_PushNews     = InpPushNews;
+   KP_ResetHour    = (int)MathMax(0, MathMin(23, InpPropResetHH));
 
    // restore ui state
    KP_Lang     = (int)KP_StoreGet("ui_lang", InpLangCN ? 1 : 0);
@@ -88,6 +116,16 @@ int OnInit()
    g_ot_tp     = (int)KP_StoreGet("ot_tp", 0);
    g_ot_dist   = (int)MathMax(10.0, KP_StoreGet("ot_dist", 200));
    KPT_RiskLoad(InpDefFloatSL, InpDefFloatTP, InpDefCloseHH, InpDefCloseMM);
+   KPT_PropLoad(InpPropOn, InpDefDailyLoss);
+   KPT_BEBuf    = (int)MathMax(0, MathMin(1000, InpBEBuffer));
+   KPT_TrailPts = (int)MathMax(20.0, MathMin(5000.0, KP_StoreGet("at_trail", InpTrailPts)));
+   KP_AliasLoad(InpMagicAliases);
+   KPTG_Load(InpTgToken, InpTgChat, InpTgDaily);
+   g_fleet_on = InpFleetOn;
+   g_ot_mode = (int)KP_StoreGet("ot_mode", 0);
+   if(g_ot_mode < 0 || g_ot_mode > 1)
+      g_ot_mode = 0;
+   g_ot_risk = MathMax(0.25, MathMin(10.0, KP_StoreGet("ot_risk", 1.0)));
    KPN_LoadSettings(InpNewsAlert, InpNewsStars, InpNewsLead, InpNewsMarks, InpNewsCurs);
 
    if(InpChartTheme)
@@ -118,6 +156,7 @@ void OnDeinit(const int reason)
   {
    EventKillTimer();
    ChartSetInteger(0, CHART_MOUSE_SCROLL, true);
+   KPF_Cleanup();
    KPN_ClearMarks();
    KP_RestoreChartTheme();
    KPC_Destroy();
@@ -136,6 +175,11 @@ void OnTimer()
    KPData_UpdateLive();
    KPData_SampleEquity();
 
+   // prop day rollover: stats must cover the new reset window before
+   // the daily-loss guard may judge it
+   if(g_prop.on && g_last_rebuild < KP_ResetAnchor(TimeCurrent()))
+      g_dirty = true;
+
    // risk guards
    if(KPT_RiskCheck())
       g_dirty = true;
@@ -148,10 +192,18 @@ void OnTimer()
       g_dirty = false;
      }
 
-   // calendar: keep fresh when alerts/marks are on or tab is visible
-   if(g_news_alert_on || g_news_marks_on || (g_tab == 7 && !g_collapsed))
+   // calendar: keep fresh when alerts/marks/guards are on or tab visible
+   if(g_news_alert_on || g_news_marks_on || g_ng_block_on || g_ng_flat_on ||
+      (g_tab == 7 && !g_collapsed))
       KPN_Refresh(false);
    KPN_CheckAlerts();
+
+   // per-position automation + news auto-flat + delivery channels
+   KPT_TrailTick();
+   KPT_NewsGuardTick();
+   KPTG_Drain();
+   KPTG_DigestTick();
+   KPF_Write();
 
    // re-anchor staggered chart labels as price range drifts
    static datetime last_marks = 0;

@@ -69,6 +69,45 @@ int KPN_MaskFromCSV(const string csv)
    return mask;
   }
 
+//--- news guard: entry blocking / auto-flat around events -----------
+bool      g_ng_block_on  = false;   // block new orders around events
+bool      g_ng_flat_on   = false;   // close exposed positions before events
+int       g_ng_before    = 15;      // minutes before event
+int       g_ng_after     = 10;      // minutes after event
+
+// does the event currency touch this symbol?
+bool KPN_SymTouches(const string sym, const string cur)
+  {
+   return (SymbolInfoString(sym, SYMBOL_CURRENCY_BASE) == cur ||
+           SymbolInfoString(sym, SYMBOL_CURRENCY_PROFIT) == cur);
+  }
+
+// active (or imminent) filtered event relevant to sym; fills name/cur
+bool KPN_ActiveEvent(const string sym, string &ev_name, string &ev_cur,
+                     long &ev_in_sec)
+  {
+   if(!g_news_ok)
+      return false;
+   datetime now = TimeCurrent();
+   for(int i=0; i<g_news_count; i++)
+     {
+      if(g_news[i].importance < g_news_stars)
+         continue;
+      if(!KPN_CurOK(g_news[i].cur))
+         continue;
+      if(now < g_news[i].time - (long)g_ng_before*60 ||
+         now > g_news[i].time + (long)g_ng_after*60)
+         continue;
+      if(!KPN_SymTouches(sym, g_news[i].cur))
+         continue;
+      ev_name = g_news[i].name;
+      ev_cur  = g_news[i].cur;
+      ev_in_sec = (long)(g_news[i].time - now);
+      return true;
+     }
+   return false;
+  }
+
 ulong     g_alerted[];
 int       g_alerted_n = 0;
 
@@ -88,6 +127,10 @@ void KPN_LoadSettings(const bool def_alert, const int def_stars,
    g_news_curmask  = (int)KP_StoreGet("news_curmask", KPN_MaskFromCSV(def_curs));
    if(g_news_curmask <= 0 || g_news_curmask >= (1 << KPN_NCUR))
       g_news_curmask = KPN_MaskFromCSV(def_curs);
+   g_ng_block_on = (KP_StoreGet("ng_block", 0) > 0.5);
+   g_ng_flat_on  = (KP_StoreGet("ng_flat", 0) > 0.5);
+   g_ng_before   = (int)MathMax(1.0, MathMin(120.0, KP_StoreGet("ng_before", 15)));
+   g_ng_after    = (int)MathMax(0.0, MathMin(120.0, KP_StoreGet("ng_after", 10)));
   }
 
 void KPN_SaveSettings()
@@ -98,6 +141,10 @@ void KPN_SaveSettings()
    KP_StoreSet("news_marks", g_news_marks_on ? 1 : 0);
    KP_StoreSet("news_filter", g_news_filter);
    KP_StoreSet("news_curmask", g_news_curmask);
+   KP_StoreSet("ng_block",  g_ng_block_on ? 1 : 0);
+   KP_StoreSet("ng_flat",   g_ng_flat_on ? 1 : 0);
+   KP_StoreSet("ng_before", g_ng_before);
+   KP_StoreSet("ng_after",  g_ng_after);
   }
 
 //--- format a calendar long value (x / 1e6) -------------------------
@@ -308,7 +355,8 @@ bool KPN_WasAlerted(const ulong vid)
    for(int i=0; i<g_alerted_n; i++)
       if(g_alerted[i] == vid)
          return true;
-   return false;
+   // survives EA reloads / TF switches (terminal GVs auto-expire in 4 weeks)
+   return (KP_StoreGet("nvl_" + (string)vid, 0) > 0.5);
   }
 
 void KPN_CheckAlerts()
@@ -331,9 +379,13 @@ void KPN_CheckAlerts()
       ArrayResize(g_alerted, n+1, 32);
       g_alerted[n] = g_news[i].vid;
       g_alerted_n++;
-      Alert(StringFormat("[KING PANEL] %s %s  in %d min  (fcst %s / prev %s)",
-            g_news[i].cur, g_news[i].name, (int)(dt/60),
-            g_news[i].v_fcst, g_news[i].v_prev));
+      KP_StoreSet("nvl_" + (string)g_news[i].vid, 1);
+      string am = StringFormat("%s %s  in %d min  (fcst %s / prev %s)",
+                  g_news[i].cur, g_news[i].name, (int)(dt/60),
+                  g_news[i].v_fcst, g_news[i].v_prev);
+      Alert("[KING PANEL] " + am);
+      if(KP_PushNews)
+         KP_Push(am);
      }
   }
 

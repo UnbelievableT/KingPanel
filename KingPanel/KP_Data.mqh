@@ -38,6 +38,9 @@ struct KPPosRec
    datetime          close_time;
    double            lots;       // opened volume total
    double            vwap_num;   // sum(entry price * lots) for avg entry
+   double            sl0;        // SL attached to the first entry deal (0 = none)
+   double            exit_num;   // sum(exit price * lots) for exit vwap
+   double            lots_out;   // closed volume total
    double            net;        // profit+swap+commission of all its deals
    bool              closed;
   };
@@ -154,6 +157,7 @@ struct KPTotals
    double            today_pl;
    double            week_pl;
    double            month_pl;
+   double            reset_pl;        // realized net since the prop-day reset anchor
   };
 
 //--- module state ----------------------------------------------------
@@ -176,6 +180,10 @@ int        g_live_count = 0;
 KPLiveOrd  g_ord[];
 int        g_ord_count = 0;
 
+// closed positions in close-time order (indices into g_pos)
+int        g_close_order[];
+int        g_close_n = 0;
+
 // balance curve (per OUT/balance deal): actual balance + trading-only
 datetime   g_curve_t[];
 double     g_curve_bal[];   // actual account balance
@@ -193,6 +201,18 @@ datetime   g_last_rebuild = 0;
 datetime KP_DayStart(const datetime t)
   {
    return (datetime)(t - (t % 86400));
+  }
+
+// prop-day reset hour (server time), set from EA input
+int KP_ResetHour = 0;
+
+// most recent daily reset anchor at KP_ResetHour:00 server time
+datetime KP_ResetAnchor(const datetime now)
+  {
+   datetime a = KP_DayStart(now) + KP_ResetHour * 3600;
+   if(now < a)
+      a -= 86400;
+   return a;
   }
 
 datetime KP_WeekStart(const datetime t)
@@ -324,6 +344,47 @@ int KP_YearBucket(const datetime dtime)
                           StringFormat("%04d", dt.year));
   }
 
+//--- magic aliases: "12345=KING S1;678=Grid v2" from EA input --------
+long   g_alias_magic[];
+string g_alias_name[];
+int    g_alias_n = 0;
+
+void KP_AliasLoad(const string csv)
+  {
+   ArrayFree(g_alias_magic);
+   ArrayFree(g_alias_name);
+   g_alias_n = 0;
+   string pairs[];
+   int n = StringSplit(csv, ';', pairs);
+   for(int i=0; i<n; i++)
+     {
+      int eq = StringFind(pairs[i], "=");
+      if(eq <= 0)
+         continue;
+      string k = StringSubstr(pairs[i], 0, eq);
+      string v = StringSubstr(pairs[i], eq+1);
+      StringTrimLeft(k); StringTrimRight(k);
+      StringTrimLeft(v); StringTrimRight(v);
+      long m = StringToInteger(k);
+      if(m == 0 || StringLen(v) == 0)
+         continue;
+      int a = g_alias_n;
+      ArrayResize(g_alias_magic, a+1);
+      ArrayResize(g_alias_name, a+1);
+      g_alias_magic[a] = m;
+      g_alias_name[a]  = v;
+      g_alias_n++;
+     }
+  }
+
+string KP_MagicName(const long magic)
+  {
+   for(int i=0; i<g_alias_n; i++)
+      if(g_alias_magic[i] == magic)
+         return g_alias_name[i];
+   return (magic == 0 ? "" : (string)magic);
+  }
+
 int KP_MagicBucket(KPAggRow &rows[], const long magic)
   {
    int n = ArraySize(rows);
@@ -333,7 +394,7 @@ int KP_MagicBucket(KPAggRow &rows[], const long magic)
    ArrayResize(rows, n+1, 16);
    KP_AggInit(rows[n]);
    rows[n].key_magic = magic;
-   rows[n].label     = (magic == 0 ? "手动" : (string)magic);
+   rows[n].label = KP_MagicName(magic);   // "" for 0: localized at display
    return n;
   }
 
@@ -437,8 +498,33 @@ void KPData_SampleEquity()
   }
 
 //--- full history rebuild -------------------------------------------
+string g_hist_fp = "";
+
 void KPData_Rebuild()
   {
+   // fast path: with no new deals and no period-boundary crossing the
+   // whole aggregation is provably identical - skip the O(deals) scan.
+   // (10k+ deal scalper accounts stalled the timer every 20s otherwise)
+   if(HistorySelect(0, TimeCurrent() + 86400))
+     {
+      int   deals0 = HistoryDealsTotal();
+      ulong last0  = (deals0 > 0 ? HistoryDealGetTicket(deals0-1) : 0);
+      // the /600 term bounds staleness from server-side deal mutations
+      // (dividend/profit corrections) to at most 10 minutes
+      string fp = StringFormat("%d|%I64u|%I64d|%I64d|%I64d|%I64d",
+                  deals0, last0,
+                  (long)KP_DayStart(TimeCurrent()),
+                  (long)KP_WeekStart(TimeCurrent()),
+                  (long)KP_ResetAnchor(TimeCurrent()),
+                  (long)(TimeCurrent() / 600));
+      if(fp == g_hist_fp)
+        {
+         g_last_rebuild = TimeCurrent();
+         KPData_ComputeExcursions();   // keep filling the MFE/MAE cache
+         return;
+        }
+      g_hist_fp = fp;
+     }
    g_last_rebuild = TimeCurrent();
 
    // reset
@@ -460,6 +546,7 @@ void KPData_Rebuild()
    datetime today_t = KP_DayStart(TimeCurrent());
    datetime week_t  = KP_WeekStart(TimeCurrent());
    datetime month_t = KP_MonthStart(TimeCurrent());
+   datetime reset_t = KP_ResetAnchor(TimeCurrent());
 
    double bal = 0.0;   // running actual balance
    double trd = 0.0;   // running trading-only pl
@@ -530,6 +617,9 @@ void KPData_Rebuild()
          g_pos[pidx].close_time = 0;
          g_pos[pidx].lots       = 0;
          g_pos[pidx].vwap_num   = 0;
+         g_pos[pidx].sl0        = 0;
+         g_pos[pidx].exit_num   = 0;
+         g_pos[pidx].lots_out   = 0;
          g_pos[pidx].net        = 0;
          g_pos[pidx].closed     = false;
          posmap.Add(pos_id, pidx);
@@ -542,12 +632,18 @@ void KPData_Rebuild()
             g_pos[pidx].dir = (dtype == DEAL_TYPE_BUY ? 0 : 1);
          g_pos[pidx].lots += lots;
          g_pos[pidx].vwap_num += HistoryDealGetDouble(tk, DEAL_PRICE) * lots;
+         if(g_pos[pidx].sl0 == 0)
+            g_pos[pidx].sl0 = HistoryDealGetDouble(tk, DEAL_SL);
          if(g_pos[pidx].open_time == 0 || dtime < g_pos[pidx].open_time)
             g_pos[pidx].open_time = dtime;
         }
       if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY || entry == DEAL_ENTRY_INOUT)
+        {
          if(dtime > g_pos[pidx].close_time)
             g_pos[pidx].close_time = dtime;
+         g_pos[pidx].exit_num += HistoryDealGetDouble(tk, DEAL_PRICE) * lots;
+         g_pos[pidx].lots_out += lots;
+        }
 
       // ---- commissions of IN deals go to totals/buckets too ----
       bool is_out = (entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY ||
@@ -576,6 +672,7 @@ void KPData_Rebuild()
             if(dtime >= today_t) g_tot.today_pl += net;
             if(dtime >= week_t)  g_tot.week_pl  += net;
             if(dtime >= month_t) g_tot.month_pl += net;
+            if(dtime >= reset_t) g_tot.reset_pl += net;
            }
          continue;
         }
@@ -611,6 +708,7 @@ void KPData_Rebuild()
       if(dtime >= today_t) g_tot.today_pl += net;
       if(dtime >= week_t)  g_tot.week_pl  += net;
       if(dtime >= month_t) g_tot.month_pl += net;
+      if(dtime >= reset_t) g_tot.reset_pl += net;
 
       g_tot.lots += lots;
       if(g_tot.first_trade == 0)
@@ -693,6 +791,27 @@ void KPData_Rebuild()
    g_tot.growth_pct = (g_tot.dep_sum > 0.0000001 ?
                        g_tot.net / g_tot.dep_sum * 100.0 : 0.0);
 
+   // closed positions sorted by close time: pack (time<<20 | index) and
+   // let ArraySort do the work; index fits 20 bits (guarded below)
+   g_close_n = 0;
+   ArrayResize(g_close_order, g_tot.closed_trades);
+   if(g_pos_count < (1 << 20))
+     {
+      long keys[];
+      ArrayResize(keys, g_tot.closed_trades);
+      int kn = 0;
+      for(int i=0; i<g_pos_count; i++)
+         if(g_pos[i].closed)
+            keys[kn++] = (((long)g_pos[i].close_time) << 20) | (long)i;
+      if(kn > 0)
+        {
+         ArraySort(keys);
+         for(int i=0; i<kn; i++)
+            g_close_order[i] = (int)(keys[i] & 0xFFFFF);
+         g_close_n = kn;
+        }
+     }
+
    KPData_ComputeExcursions();
   }
 
@@ -709,6 +828,11 @@ struct KPExc
    double            mfe;        // max favorable excursion, money
    double            mae;        // max adverse excursion, money
    double            net;        // realized net of the position
+   int               dir;        // 0 buy 1 sell
+   double            entry;      // entry vwap
+   double            exitv;      // exit vwap
+   double            hi;         // window high
+   double            lo;         // window low
   };
 
 KPExc g_exc[];
@@ -771,6 +895,12 @@ void KPData_ComputeExcursions()
       g_exc[n].mfe    = fe_p / ts * tv * g_pos[i].lots;
       g_exc[n].mae    = ae_p / ts * tv * g_pos[i].lots;
       g_exc[n].net    = g_pos[i].net;
+      g_exc[n].dir    = g_pos[i].dir;
+      g_exc[n].entry  = entry;
+      g_exc[n].exitv  = (g_pos[i].lots_out > 0 ?
+                         g_pos[i].exit_num / g_pos[i].lots_out : entry);
+      g_exc[n].hi     = hi;
+      g_exc[n].lo     = lo;
       g_exc_n++;
       added++;
      }
