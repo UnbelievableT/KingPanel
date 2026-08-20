@@ -1,91 +1,100 @@
 # KING PANEL V1.2
 
-彭博终端风格的 MT5 账户统计看板 EA。纯 `CCanvas` 位图渲染 —— 深色终端底、琥珀色主调、直角边框、1px 分割线、等宽数字字体，紧凑高密度布局，DPI 自适应（4K/缩放屏自动放大），支持拖拽与收拢。
+**English** | [简体中文](README.zh-CN.md)
 
-**V1.1-V1.2 要点**：中英双语（默认英文，标题栏一键切换）；金色图表主题（卸载自动还原）；**下单面板**（市价/四类挂单、手数/止损止盈/距离步进、二次确认）；图表中心五张大图（资金曲线/日盈亏/月盈亏/回撤水下图/**MFE×MAE 散点**——对称刻度方图 + 绿红象限底色 + E-Ratio/兑现率）；持仓页挂单子页；分析表**周期最大回撤**列，总览含今日/本月回撤；日历**币种筛选**（默认 USD/EUR/JPY，10 币种 chip）+ K 线竖线与**错落式旋转标签** + 星级弹窗提醒；面板宽度可调（默认 560，美分账户友好）；全部面板填充为**预混合不透明色**（修复可透视看到背景 K 线的问题）。
+A Bloomberg-terminal style account dashboard EA for MetaTrader 5. Pure `CCanvas` bitmap rendering — near-black terminal background, amber accent, square corners, 1px separators, monospace numerics — in a compact, high-density layout. DPI-aware (auto-scales on 4K / scaled displays), draggable, collapsible, and the panel height fills the chart window.
+
+**V1.1–V1.2 highlights**: EN/CN bilingual UI (English default, one-click toggle in the title bar); gold chart theme (applied on load, original settings restored on removal); **order ticket** (market + four pending order types, lot/SL/TP/distance steppers, one-click execution); Chart Center with five full-size charts (equity curve, daily P&L, monthly P&L, underwater drawdown, **MFE×MAE scatter** — symmetric-scale square plot with green/red quadrant tints, E-Ratio and capture rate); pending-orders sub-page with per-row deletion; **per-period max drawdown + DD%** columns in the Analysis tab; economic calendar with **currency filter** (USD/EUR/JPY default, 10-currency chips), on-chart event lines with **lane-layout horizontal labels**, and starred popup alerts; adjustable panel width (600 px default, cent-account friendly); every panel fill is a **pre-blended opaque color** (no see-through pixels over the chart).
 
 ```
 KingPanel/
-├── KingPanel.mq5     主 EA（输入参数、事件路由、定时器）
-├── KP_Theme.mqh      主题：配色 / DPI 缩放 / 数字与时间格式化 / 持久化存储
-├── KP_Canvas.mqh     画布封装：文本、迷你曲线、环形仪表、横条、按钮、点击热区
-├── KP_Data.mqh       统计引擎：历史扫描、持仓重建、周期/品种/魔号聚合、资金曲线、回撤
-├── KP_Trade.mqh      交易操作：批量平仓 / 撤挂单 / 风控自动化（浮亏浮盈/净值线/定时）
-├── KP_News.mqh       财经日历（MT5 原生 Calendar API，无需 WebRequest 白名单）
-├── KP_UI.mqh         布局核心：头部 / 账户条 / 页签 / 页脚 / 总览仪表盘
-└── KP_UI2.mqh        其余页签渲染 + 点击/滚轮/拖拽交互
+├── KingPanel.mq5     Main EA (inputs, event routing, timer)
+├── KP_Theme.mqh      Theme: palette / DPI scale / number & time formatting / persistence
+├── KP_Canvas.mqh     Canvas layer: text, sparklines, ring gauge, bars, buttons, hit map
+├── KP_Data.mqh       Statistics engine: history scan, position reconstruction,
+│                     period/symbol/magic aggregation, equity curve, drawdown, MFE/MAE
+├── KP_Trade.mqh      Trading ops: bulk close / order ticket / risk-guard automation
+├── KP_News.mqh       Economic calendar (native MT5 Calendar API, no WebRequest needed)
+├── KP_UI.mqh         Layout core: header / account strip / tabs / footer / overview / Chart Center
+└── KP_UI2.mqh        Remaining tabs + click / wheel / drag interaction
 ```
 
-## 安装与编译
+## Install & Compile
 
-> 仓库已附带编译产物 `KingPanel/KingPanel.ex5`（2026.08.14 于「矩阵管理」VM MetaEditor 编译，0 errors / 0 warnings），可直接使用。
-> 重新编译：`python3 compile_on_matrix.py [config]` —— 复用 fx-ea-research 框架推源码到 Parallels VM 用 MetaEditor64 编译并取回 .ex5（仅编译，不碰 VM 进程）。默认「矩阵管理」，传 `mt5.king.10k.json` 用「汇刃丨工作」。同步分发用 `python3 sync_to_vm.py [config]`。
+> A compiled `KingPanel/KingPanel.ex5` is included (MetaEditor, **0 errors / 0 warnings**) and can be used directly.
+> Rebuilding: `python3 compile_on_matrix.py [config]` pushes the sources to a Parallels VM, compiles with MetaEditor64 and pulls the `.ex5` back (compile only — never touches VM processes). `python3 sync_to_vm.py [config]` distributes the build. Both scripts are specific to the author's VM setup; on any Windows machine a plain MetaEditor **F7** build works the same.
 
-1. 将 `KingPanel` 整个文件夹复制到 `MQL5/Experts/` 下（数据目录：MT5 菜单 文件 → 打开数据文件夹）。
-2. MetaEditor 中打开 `KingPanel.mq5`，按 **F7** 编译（所有 `.mqh` 与主文件同目录，无需额外配置）。
-3. 将 EA 拖到任意图表。需要使用平仓/风控功能时，勾选「允许算法交易」。
-4. 财经日历页签需要终端启用新闻（工具 → 选项 → 服务器 → 启用新闻）；部分模拟环境不提供日历数据，面板会给出提示。
-5. **日历事件名的语言跟随 MT5 终端界面语言**（数据来自终端内置日历，MQL5 无法指定语言）——要英文事件名请在 MT5 菜单 View → Languages 切换为 English 并重启终端；面板的 EN/中 开关只影响面板自身文案。
+1. Copy the whole `KingPanel` folder into `MQL5/Experts/` (MT5 menu File → Open Data Folder).
+2. Open `KingPanel.mq5` in MetaEditor and press **F7** (all `.mqh` files live next to the main file — no extra configuration).
+3. Drag the EA onto any chart. Enable **Algo Trading** if you want the close / order / risk features.
+4. The News tab needs the terminal's news feed enabled (Tools → Options → Server → Enable news). Some demo environments don't serve calendar data; the panel says so explicitly.
+5. **Calendar event names follow the MT5 terminal UI language** (the data comes from the terminal's built-in calendar; MQL5 offers no language parameter). For English event names switch the terminal to English via View → Languages and restart. The panel's own EN/中 toggle only affects panel text.
 
-## 页签功能
+## Tabs
 
-| 页签 | 内容 |
+| Tab | Contents |
 |---|---|
-| **总览 OVERVIEW** | 净值/余额/浮动盈亏/保证金率四大 KPI 磁贴；资金曲线（历史余额 ↔ 30 分钟实时净值，FULL 打开图表中心）；18 项核心统计指标；胜率环形仪表；EA vs 手动占比条；今日/本周/本月盈亏 |
-| **图表中心** | 总览 FULL 按钮进入：① 资金曲线大图 ② 日盈亏柱状（近60日）③ 月盈亏柱状 ④ 回撤水下曲线 ⑤ **MFE×MAE 散点**（X=最大不利波动、Y=最大有利波动、绿/红=盈/亏、对角参考线，附 E-Ratio / 平均 MFE / 平均 MAE / 利润兑现率） |
-| **分析 ANALYSIS** | 按 日/周/月/年 归集：订单、手数、胜率、总盈利、总亏损、**最大回撤 + DD%（周期内已实现权益峰谷，百分比=回撤额÷峰值时余额）**、净盈亏；底部全历史汇总行，滚轮翻页 |
-| **品种 SYMBOLS** | 按品种聚合 + 利润分布条，点「净盈亏」表头切换排序 |
-| **策略 MAGICS** | 按魔术号聚合，魔号 0 = MANUAL/手动，其余同品种页 |
-| **下单 ORDER** | 品种切换（行情列表循环）、实时 Bid/Ask/点差、手数步进+四档快捷、止损/止盈/挂单距离（点）步进、SELL/BUY 大按钮与 B-LMT/S-LMT/B-STP/S-STP 挂单（全部二次确认，挂单价自动满足最小停止位），下单魔术号可配置（默认 0 = 计入手动统计） |
-| **持仓 TRADE** | 多/空敞口汇总；六个批量操作（**二次点击确认**）；POSITIONS/ORDERS 双子页 —— 持仓逐笔平仓 ×，**挂单列表**（类型/挂价/现价/距离点数/挂龄）逐笔撤单 × |
-| **风控 RISK** | 四个一次性风控开关：浮亏全平、浮盈全平、净值保护线、每日定时平仓；−/+ 步进调整，按账号持久化 |
-| **日历 NEWS** | MT5 原生财经日历（服务器时区）；重要性过滤；**K 线图竖线标注未来 48h 事件**（红/黄/灰按星级）；**弹窗提醒**（≥星级阈值、提前分钟数均可调）；K 线标签为**横排 + 车道式防堆叠布局**（按当前缩放换算标签宽度，6 条纵向车道贪心分配，缩放后自动重排）；**性能设计**：标注对象按指纹增量维护——仅当事件集/设置真正变化时才重建对象，缩放滚动只移动价格锚点；H2 及以上周期只画竖线不画文字标签（大周期上标签必然堆叠且对象churn会拖慢图表）；下一事件倒计时与高亮 |
+| **OVERVIEW** | Four KPI tiles (equity / balance / floating P&L / margin level); equity curve (full history ↔ live 30-minute equity, FULL opens the Chart Center); 18 core statistics; win-rate ring gauge; algo-vs-manual split bar; today / week / month P&L |
+| **Chart Center** | Opened via FULL: ① full-size equity curve ② daily P&L bars (last 60 days) ③ monthly P&L bars ④ underwater drawdown curve with deepest-point marker ⑤ **MFE×MAE scatter** (X = max adverse excursion, Y = max favorable excursion, green dot = win / red ring = loss, MFE=MAE diagonal, E-Ratio / avg MFE / avg MAE / capture rate) |
+| **ANALYSIS** | Aggregated by day / week / month / year: trades, lots, win rate, gross profit, gross loss, **max drawdown + DD%** (intra-period realized-equity peak-to-trough; DD% = drawdown ÷ balance at the peak), net; full-history TOTAL row pinned at the bottom |
+| **SYMBOLS** | Per-symbol aggregation + profit distribution bars; click the NET header to flip sort order |
+| **MAGICS** | Per-magic-number aggregation; magic 0 shows as MANUAL |
+| **TRADE** | Long/short exposure summary; six bulk operations; POSITIONS / ORDERS sub-pages — per-row close × for positions, **pending order list** (type / price / now / distance / age) with per-row delete × |
+| **ORDER** | Symbol cycling through Market Watch, live bid/ask/spread, lot stepper + four quick presets, SL/TP/pending-distance steppers (points), large SELL/BUY buttons and B-LMT / S-LMT / B-STP / S-STP pending buttons — all **one-click execution**, pending prices auto-respect the broker's stops level; configurable magic (default 0 = counted as manual) |
+| **RISK** | Four one-shot risk guards: float-loss close-all, float-profit close-all, equity floor, daily timed close; −/+ steppers, persisted per account |
+| **NEWS** | Native MT5 economic calendar (server timezone); importance filter; **on-chart vertical lines for the next 48 h** (red/amber/gray by importance) with horizontal, lane-layout labels that never stack; **popup alerts** (importance threshold and lead minutes adjustable); currency filter chips; next-event countdown and row highlight |
 
-## 交互
+## Interaction
 
-- **拖拽**：按住标题栏移动面板，位置自动记忆（按账号持久化）。
-- **收拢**：标题栏右侧 `−`/`+` 按钮，收拢后仅剩标题条。
-- **高度自适应**：面板高度自动铺满图表窗口（从面板顶部到窗口底部），窗口大小变化实时跟随；各列表行数随高度动态增减，总览资金曲线与图表中心大图随高度伸展。
-- **滚轮**：鼠标悬停在面板上滚动列表；右侧滚动条为比例式滑块（大小反映页面占比），**点击轨道任意位置直接跳转**，▲▼ 按钮步进。
-- **状态**：标题栏绿点 = 算法交易已允许；页脚显示 SYD/TYO/LON/NYC 交易时段（GMT 近似，不含夏令时修正）、当前品种点差、服务器时钟；风控触发消息会在页脚黄字显示 2 分钟。
+- **Drag**: hold the title bar to move; position is remembered per account.
+- **Collapse**: `−`/`+` button at the right of the title bar; collapsed = title bar only.
+- **Adaptive height**: the panel fills the chart window from its top edge down and follows window resizes in real time; list row counts grow/shrink with the height, the overview curve and Chart Center plots stretch.
+- **Wheel**: hover the panel and scroll lists; the scrollbar thumb is page-proportional and **clicking anywhere on the track jumps straight there**; ▲▼ step.
+- **One-click trading**: every trading button (orders, closes, deletions) executes on a single click — a confirmation step only costs slippage. Results (fill price or retcode) show instantly in the footer. Requires Algo Trading enabled.
+- **Status**: green dot in the header = algo trading allowed; footer shows SYD/TYO/LON/NYC session dots (approx. GMT, no DST), current symbol spread and the server clock; risk-guard triggers flash in yellow for 2 minutes.
 
-## 统计口径（数据准确性说明）
+## Statistics methodology
 
-- **净利润** = 全部已平仓位的 `profit + commission + swap + fee` 之和，不含出入金。
-- **交易次数 / 胜率**：按**平仓仓位**计（通过 `DEAL_POSITION_ID` 重建仓位，部分平仓合并为一笔），胜 = 该仓位净盈亏 ≥ 0。
-- **周期/品种/魔号表的订单数**：按**平仓成交（OUT deal）**计，即每次部分平仓算一单（与主流统计面板口径一致，与总览的按仓位口径可能略有差异）。
-- **归集时间**：所有盈亏按平仓成交时间归入所在 日/周/月/年（周一为一周之始）。
-- **最大回撤**：在「仅交易盈亏」累计曲线上计算峰谷差（出入金不会制造虚假回撤），百分比 = 回撤额 ÷ 峰值时的实际余额。
-- **盈利因子** = 总盈利 ÷ |总亏损|；**期望值** = 净利润 ÷ 平仓交易数；**恢复系数** = 净利润 ÷ 最大回撤；**账户增长** = 净利润 ÷ 入金总额。
-- **EA/手动占比**：按平仓成交的 Magic 是否为 0 区分。
-- **资金曲线（历史）**：每笔平仓成交与出入金后的实际余额连线；**实时曲线**为最近 30 分钟每秒采样的净值。
-- **周期最大回撤（分析表）**：该周期内「已实现交易权益」逐笔曲线的最大峰谷差（含该周期首笔相对期初水位的下跌），出入金不计入。
-- **MFE / MAE**：对最近 200 笔已平仓位按 M1 K 线回放（每次重算增量补 40 笔），MFE = 持仓期间最大有利价差、MAE = 最大不利价差，均按 tick value × 手数换算为账户货币（历史汇率近似）；**E-Ratio** = 平均MFE ÷ 平均MAE，**兑现率** = 净利润合计 ÷ MFE 合计。品种已从行情列表移除或 M1 历史未下载时该笔跳过，样本数在图内显示。
+- **Net profit** = sum of `profit + commission + swap + fee` over all closed positions; deposits/withdrawals excluded.
+- **Trades / win rate**: counted per **closed position** (positions reconstructed via `DEAL_POSITION_ID`, partial closes merged); a win = position net ≥ 0.
+- **Row counts in period/symbol/magic tables**: counted per **closing deal (OUT)** — each partial close counts once (the convention used by mainstream statistics panels; may differ slightly from the per-position TOTAL row).
+- **Bucketing**: all P&L is assigned to the day/week/month/year of the closing deal (weeks start Monday; week labels take the year of the week's start).
+- **Max drawdown**: peak-to-trough on the trading-only cumulative curve (cash flow cannot fake a drawdown); percentage = drawdown ÷ actual balance at the peak — deposits landing mid-drawdown do **not** dilute the denominator.
+- **Per-period max drawdown (Analysis)**: peak-to-trough of the realized trading equity within the period, including the first deal's drop against the period's opening watermark.
+- **Profit factor** = gross profit ÷ |gross loss|; **expectancy** = net ÷ closed trades; **recovery factor** = net ÷ max DD; **growth** = net ÷ total deposits.
+- **Algo vs manual**: split by whether the closing deal's magic number is 0.
+- **Equity curve (history)**: actual balance after every closing deal and cash-flow operation; **live curve** = equity sampled every second over the last 30 minutes.
+- **MFE / MAE**: the last 200 closed positions are replayed on M1 bars (incrementally, 40 per rebuild); MFE = max favorable price excursion, MAE = max adverse excursion, both converted to account currency via tick value × lots (historical FX rates approximated). **E-Ratio** = avg MFE ÷ avg MAE; **capture rate** = total net ÷ total MFE. Positions whose symbol left Market Watch or whose M1 history isn't loaded are skipped; the sample count is shown in the chart.
 
-## 输入参数
+## Inputs
 
-| 分组 | 参数 | 默认 | 说明 |
+| Group | Input | Default | Description |
 |---|---|---|---|
-| Panel | InpX / InpY | 10 / 30 | 首次加载位置（此后记忆拖拽位置） |
-| Panel | InpWidth | 600 | 面板宽度 px（520-900，美分账户大数字建议加宽） |
-| Panel | InpScale | 1.0 | 额外缩放倍率（DPI 已自动适配） |
-| Panel | InpLangCN | false | 默认中文界面（false = 英文；面板内可随时切换并记忆） |
-| Panel | InpChartTheme | true | 金色图表主题（K线/背景改色、隐藏网格与成交量；卸载还原） |
-| Fonts | InpFontMono / InpFontCJK | Consolas / Microsoft YaHei | 数字（等宽）/ 中文字体 |
-| Data | InpRebuildSec | 20 | 全量统计重算间隔（有成交时立即重算） |
-| News | InpNewsAlert | true | 事件弹窗提醒 |
-| News | InpNewsStars | 3 | 提醒与标线的星级阈值（1-3） |
-| News | InpNewsLead | 15 | 提前提醒分钟数 |
-| News | InpNewsMarks | true | K 线图新闻竖线 + 错落式旋转标签 |
-| News | InpNewsCurs | USD,EUR,JPY | 默认关注币种（仅首次加载，之后面板内 chip 多选记忆） |
-| Order | InpPanelMagic | 0 | 下单面板魔术号（0 = 计入手动统计） |
-| Risk | InpDefFloatSL / InpDefFloatTP | 500 / 500 | 浮亏/浮盈全平默认阈值（仅首次加载生效） |
-| Risk | InpDefCloseHH:MM | 22:30 | 定时平仓默认时刻（服务器时间） |
-| Brand | InpShowBrand | true | 显示 Telegram 频道 |
-| Brand | InpChannel | @topxea | Telegram 频道（标题栏与无持仓占位区低调显示） |
+| Panel | InpX / InpY | 10 / 30 | First-load position (drag position is remembered afterwards) |
+| Panel | InpWidth | 600 | Panel width in px (520–900; widen for cent accounts) |
+| Panel | InpScale | 1.0 | Extra scale multiplier (DPI is already auto-detected) |
+| Panel | InpLangCN | false | Chinese UI by default (toggle in-panel any time; remembered) |
+| Panel | InpChartTheme | true | Gold chart theme (recolors candles/background, hides grid & volumes; restored on removal) |
+| Fonts | InpFontMono / InpFontCJK | Consolas / Microsoft YaHei | Numeric (monospace) / CJK font |
+| Data | InpRebuildSec | 20 | Full statistics rebuild interval (immediate on new deals) |
+| News | InpNewsAlert | true | Popup alerts before events |
+| News | InpNewsStars | 3 | Importance threshold for alerts & chart marks (1–3) |
+| News | InpNewsLead | 15 | Alert lead time in minutes |
+| News | InpNewsMarks | true | On-chart event lines + lane-layout labels |
+| News | InpNewsCurs | USD,EUR,JPY | Default currencies (first load only; chip multi-select persisted afterwards) |
+| Order | InpPanelMagic | 0 | Magic number for panel orders (0 = counted as manual) |
+| Risk | InpDefFloatSL / InpDefFloatTP | 500 / 500 | Loss / profit guard defaults (first load only) |
+| Risk | InpDefCloseHH:MM | 22:30 | Timed-close default (server time) |
+| Brand | InpShowBrand | true | Show the Telegram channel |
+| Brand | InpChannel | @topxea | Telegram channel (understated, title bar + empty-positions placeholder) |
 
-## 注意事项
+## Notes
 
-- 全部交易按钮（下单/平仓/撤单）**单击即执行**（确认等待只会吃掉滑点），执行结果即时显示在页脚；需「允许算法交易」开启。风控开关为一次性触发，防止行情反复来回打爆。
-- 面板设置（页签、位置、收拢状态、风控参数）通过终端全局变量按登录账号持久化，重启终端不丢失。
-- 交易时段指示为 GMT 固定时段近似，未处理各市场夏令时。
+- All trading buttons execute on a single click and require Algo Trading; the risk guards are **one-shot** — they disarm after firing so a whipsawing market can't fire them repeatedly. Arming a timed close after today's mark has passed starts it tomorrow (it will not fire instantly).
+- Panel settings (tab, position, collapsed state, language, risk and news parameters) persist per login via terminal global variables and survive terminal restarts.
+- Session indicators are fixed GMT approximations without DST handling.
+- Chart-mark performance: mark objects are maintained incrementally by fingerprint — scroll/zoom only moves label price anchors; on H2 and above only vertical lines are drawn (labels would inevitably stack there and object churn would slow the chart).
+
+---
+
+Telegram: [@topxea](https://t.me/topxea)
