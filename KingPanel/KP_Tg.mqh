@@ -44,7 +44,8 @@ bool KPTG_Send(const string text)
    string headers = "Content-Type: application/x-www-form-urlencoded\r\n";
    string rheaders = "";
    ResetLastError();
-   int code = WebRequest("POST", url, headers, 3000, data, result, rheaders);
+   // keep the blocking window short: this runs on the chart thread
+   int code = WebRequest("POST", url, headers, 1200, data, result, rheaders);
    if(code == -1)
      {
       if(!g_tg_hinted)
@@ -58,7 +59,9 @@ bool KPTG_Send(const string text)
    return (code == 200);
   }
 
-// drain events queued by KP_Push (single chokepoint for all alerts)
+// drain events queued by KP_Push (single chokepoint for all alerts).
+// WebRequest is synchronous and stalls the chart thread, so at most one
+// send per tick and never while a burst is still arriving.
 void KPTG_Drain()
   {
    if(!KPTG_On())
@@ -67,13 +70,16 @@ void KPTG_Drain()
          g_push_queue_n = 0;
       return;
      }
-   // batch to one message to respect rate limits
    if(g_push_queue_n <= 0)
       return;
+   // batch EVERY queued line - dropping the tail would silently lose
+   // exactly the alerts a burst (a guard cascade) is made of
    string text = "";
-   for(int i=0; i<g_push_queue_n && i<10; i++)
+   for(int i=0; i<g_push_queue_n; i++)
       text += (i > 0 ? "\n" : "") + g_push_queue[i];
    g_push_queue_n = 0;
+   if(StringLen(text) > 3500)
+      text = StringSubstr(text, 0, 3500) + " ...";
    KPTG_Send("[KING PANEL] " + text);
   }
 
@@ -109,8 +115,10 @@ void KPTG_DigestTick()
      }
    double dwr = (dtrd > 0 ? 100.0*dwin/dtrd : 0);
    bool ok = KPTG_Send(StringFormat(
-      "[KING PANEL] daily digest %s\nnet %.2f | trades %d | win %.0f%% | worst %.2f\n"
-      "equity %.2f | balance %.2f | total net %.2f | maxDD %.1f%%",
+      LL("[KING PANEL] daily digest %s\nnet %.2f | trades %d | win %.0f%% | worst %.2f\n"
+         "equity %.2f | balance %.2f | total net %.2f | maxDD %.1f%%",
+         "[KING PANEL] 每日摘要 %s\n净盈亏 %.2f | 笔数 %d | 胜率 %.0f%% | 最差 %.2f\n"
+         "净值 %.2f | 余额 %.2f | 累计净利 %.2f | 最大回撤 %.1f%%"),
       TimeToString(a - 86400, TIME_DATE), dnet, dtrd, dwr, worst,
       g_acc.equity, g_acc.balance, g_tot.net, g_tot.max_dd_pct));
    if(ok)

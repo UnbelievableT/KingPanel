@@ -39,7 +39,7 @@ void KPF_Write()
       return;
    g_fleet_last_write = TimeCurrent();
    string fn = StringFormat("%s%I64d.txt", KP_FLEET_PREFIX, g_acc.login);
-   int h = FileOpen(fn, FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON|FILE_SHARE_READ, "\t", CP_UTF8);
+   int h = FileOpen(fn, FILE_WRITE|FILE_TXT|FILE_ANSI|FILE_COMMON|FILE_SHARE_READ, '\t', CP_UTF8);
    if(h == INVALID_HANDLE)
       return;
    // machine clock, NOT broker time: readers on other brokers must be
@@ -66,7 +66,7 @@ void KPF_Read()
       return;
    do
      {
-      int h = FileOpen(fn, FILE_READ|FILE_TXT|FILE_ANSI|FILE_COMMON|FILE_SHARE_READ|FILE_SHARE_WRITE, "\t", CP_UTF8);
+      int h = FileOpen(fn, FILE_READ|FILE_TXT|FILE_ANSI|FILE_COMMON|FILE_SHARE_READ|FILE_SHARE_WRITE, '\t', CP_UTF8);
       if(h == INVALID_HANDLE)
          continue;
       string line = FileReadString(h);

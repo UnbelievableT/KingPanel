@@ -6,6 +6,7 @@ Deploys KingPanel/*.mq5|.mqh -> VM MQL5\\Experts\\KingPanel\\, compiles with
 MetaEditor64 /compile, prints the compile log, pulls KingPanel.ex5 back here.
 Compile only - never touches terminal64/metatester64 processes.
 """
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,6 +21,15 @@ LOCAL_DIR = Path(__file__).parent / "KingPanel"
 
 
 def main() -> int:
+    # static checks first: MetaEditor compiles these defects cleanly, they
+    # only surface as wrong pixels or wrong numbers at runtime
+    lint = Path(__file__).parent / "lint.py"
+    if lint.exists():
+        rc = subprocess.run([sys.executable, str(lint)]).returncode
+        if rc != 0:
+            print("lint failed - not deploying")
+            return rc
+
     # optional argv: config json name (default matrix; mt5.king.10k.json = 汇刃丨工作)
     config_name = sys.argv[1] if len(sys.argv) > 1 else "mt5.matrix.10k.json"
     cfg = load_app_config(RESEARCH / "configs" / config_name)

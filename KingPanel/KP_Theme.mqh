@@ -59,22 +59,53 @@ string LL(const string en, const string cn)
 //--- base panel width (px, unscaled; set from EA input) -------------
 int KP_BaseW = 560;
 
-//--- DPI scale ------------------------------------------------------
-double KP_Scale = 1.0;
+//--- DPI / typography scaling ---------------------------------------
+// Layout is scaled by KP_Scale (screen DPI x user multiplier).
+// Fonts use NEGATIVE sizes, which MT5 already scales by the screen DPI,
+// so KP_F must apply only the USER part - otherwise DPI is counted
+// twice. Applying it is mandatory: without it InpScale would enlarge
+// every box while leaving the text at its original size.
+double KP_Scale     = 1.0;   // layout: dpi/96 * user
+double KP_UserScale = 1.0;   // user multiplier alone
+double KP_FontBoost = 1.0;   // extra text-only multiplier
 
 void KP_InitScale(const double user_mult)
   {
    double dpi = (double)TerminalInfoInteger(TERMINAL_SCREEN_DPI);
    if(dpi <= 0.0)
       dpi = 96.0;
-   KP_Scale = (dpi / 96.0) * (user_mult <= 0.0 ? 1.0 : user_mult);
+   KP_UserScale = (user_mult <= 0.0 ? 1.0 : user_mult);
+   KP_Scale     = (dpi / 96.0) * KP_UserScale;
+  }
+
+// font_mult <= 0 => auto: on low-DPI screens our smallest sizes land
+// around 8 px, where GDI hinting gives up and glyphs turn mushy, so
+// those screens get a boost; high-DPI screens already render cleanly.
+void KP_InitFonts(const double font_mult)
+  {
+   if(font_mult > 0.01)
+     {
+      KP_FontBoost = MathMax(0.7, MathMin(2.5, font_mult));
+      return;
+     }
+   double dpi = (double)TerminalInfoInteger(TERMINAL_SCREEN_DPI);
+   if(dpi <= 0.0)
+      dpi = 96.0;
+   KP_FontBoost = (dpi <= 100.0 ? 1.15 : (dpi <= 120.0 ? 1.08 : 1.0));
   }
 
 // layout px scaled to screen
 int KP_S(const int px) { return (int)MathRound(px * KP_Scale); }
 
-// font size in tenths of points (negative => device independent)
-int KP_F(const double pt) { return -(int)MathRound(pt * 10.0); }
+// font size in tenths of a point; negative = MT5 applies screen DPI.
+// The 6.0 pt floor keeps the smallest labels above the ~8 px mush line.
+int KP_F(const double pt)
+  {
+   double v = pt * KP_UserScale * KP_FontBoost;
+   if(v < 6.0)
+      v = 6.0;
+   return -(int)MathRound(v * 10.0);
+  }
 
 // runtime channel mix toward a target color — ALWAYS returns opaque
 // (heatmap gradients etc. must never introduce translucent pixels)
@@ -129,7 +160,10 @@ uint KP_PLColor(const double v)
 // 12 345 678.90 style with thin thousands separator (comma)
 string KP_Money(const double v, const int digits=2)
   {
-   string s   = DoubleToString(MathAbs(v), digits);
+   // -0.004 formatted at 2 digits must not print as a red "-0.00"
+   double av  = MathAbs(v);
+   string s   = DoubleToString(av, digits);
+   bool   neg = (v < 0 && StringToDouble(s) > 0.0);
    int    dot = StringFind(s, ".");
    string ip  = (dot < 0 ? s : StringSubstr(s, 0, dot));
    string fp  = (dot < 0 ? "" : StringSubstr(s, dot));
@@ -141,7 +175,7 @@ string KP_Money(const double v, const int digits=2)
          res += ",";
       res += StringSubstr(ip, i, 1);
      }
-   return (v < 0 ? "-" : "") + res + fp;
+   return (neg ? "-" : "") + res + fp;
   }
 
 // cents-account friendly: drops decimals once the number gets long
@@ -169,11 +203,18 @@ string KP_PctSigned(const double v, const int digits=1)
   }
 
 // compact volume: 0.01 / 12.35 / 1.2K lots
-string KP_Lots(const double v)
+string KP_Lots(const double v, const int digits=2)
   {
    if(MathAbs(v) >= 1000.0)
       return DoubleToString(v/1000.0, 1) + "K";
-   return DoubleToString(v, 2);
+   return DoubleToString(v, digits);
+  }
+
+// display digits for a symbol's volume step (0.001-step symbols exist)
+int KP_LotDigits(const string sym)
+  {
+   double st = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+   return (st > 0 && st < 0.01 ? 3 : 2);
   }
 
 // seconds -> "3d 04:12" | "04:12:33"

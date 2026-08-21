@@ -15,7 +15,7 @@ string KPX_Dir()
 // closed positions journal
 bool KPX_WritePositions(const string path)
   {
-   int h = FileOpen(path, FILE_WRITE|FILE_TXT|FILE_ANSI, "\t", CP_UTF8);
+   int h = FileOpen(path, FILE_WRITE|FILE_TXT|FILE_ANSI, '\t', CP_UTF8);
    if(h == INVALID_HANDLE)
       return false;
    FileWriteString(h, "pos_id,symbol,magic,dir,lots,open_time,close_time,"
@@ -39,7 +39,7 @@ bool KPX_WritePositions(const string path)
 // daily period table
 bool KPX_WritePeriods(const string path)
   {
-   int h = FileOpen(path, FILE_WRITE|FILE_TXT|FILE_ANSI, "\t", CP_UTF8);
+   int h = FileOpen(path, FILE_WRITE|FILE_TXT|FILE_ANSI, '\t', CP_UTF8);
    if(h == INVALID_HANDLE)
       return false;
    FileWriteString(h, "date,trades,lots,wins,losses,gross_win,gross_loss,"
@@ -58,7 +58,7 @@ bool KPX_WritePeriods(const string path)
 // self-contained dark statement with an inline-SVG equity curve
 bool KPX_WriteHTML(const string path)
   {
-   int h = FileOpen(path, FILE_WRITE|FILE_TXT|FILE_ANSI, "\t", CP_UTF8);
+   int h = FileOpen(path, FILE_WRITE|FILE_TXT|FILE_ANSI, '\t', CP_UTF8);
    if(h == INVALID_HANDLE)
       return false;
 

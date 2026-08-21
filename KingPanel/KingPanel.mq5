@@ -26,7 +26,8 @@ input group "════ Panel ════"
 input int    InpX          = 10;      // Initial X (px, first load only)
 input int    InpY          = 30;      // Initial Y (px, first load only)
 input int    InpWidth      = 600;     // Panel width (px, 520-900; wider for cent accounts)
-input double InpScale      = 1.0;     // Scale multiplier (on top of DPI auto-scale)
+input double InpScale      = 1.0;     // Scale multiplier (whole panel: layout AND text)
+input double InpFontScale  = 0;       // Text size multiplier (0 = auto by screen DPI; try 1.2 if text looks small)
 input bool   InpLangCN     = false;   // Chinese interface by default (false = English)
 input bool   InpChartTheme = true;    // Apply gold chart theme (restored on removal)
 
@@ -83,11 +84,14 @@ input string InpChannel    = "@topxea";    // Telegram channel
 //--- state -----------------------------------------------------------
 bool     g_dirty        = true;
 datetime g_next_rebuild = 0;
+bool     g_is_owner     = true;   // only the owner instance may trade
+string   g_owner_key    = "";
 
 //+------------------------------------------------------------------+
 int OnInit()
   {
    KP_InitScale(InpScale <= 0 ? 1.0 : InpScale);
+   KP_InitFonts(InpFontScale);
    KP_InitStorage();
    KP_FontMono = InpFontMono;
    KP_FontCJK  = InpFontCJK;
@@ -117,6 +121,20 @@ int OnInit()
    g_ot_dist   = (int)MathMax(10.0, KP_StoreGet("ot_dist", 200));
    KPT_RiskLoad(InpDefFloatSL, InpDefFloatTP, InpDefCloseHH, InpDefCloseMM);
    KPT_PropLoad(InpPropOn, InpDefDailyLoss);
+   KPT_PropAnchorLoad();
+   // only ONE instance per login may run the guards/automation, or two
+   // panels would both fire the same close and both write the same GVs
+   string owner_key = StringFormat("KP5_OWNER_%I64d", AccountInfoInteger(ACCOUNT_LOGIN));
+   if(!GlobalVariableCheck(owner_key) ||
+      TimeCurrent() - (datetime)(long)GlobalVariableGet(owner_key) > 15)
+     {
+      g_is_owner = true;
+      GlobalVariableTemp(owner_key);
+      GlobalVariableSet(owner_key, (double)(long)TimeCurrent());
+     }
+   else
+      g_is_owner = false;
+   g_owner_key = owner_key;
    KPT_BEBuf    = (int)MathMax(0, MathMin(1000, InpBEBuffer));
    KPT_TrailPts = (int)MathMax(20.0, MathMin(5000.0, KP_StoreGet("at_trail", InpTrailPts)));
    KP_AliasLoad(InpMagicAliases);
@@ -147,7 +165,10 @@ int OnInit()
    g_dirty = false;
 
    KPU_Render();
-   EventSetTimer(1);
+   // in a non-visual backtest a 1 s timer means a full canvas repaint per
+   // simulated second, which dominates the run and can fail validation
+   EventSetTimer((bool)MQLInfoInteger(MQL_TESTER) &&
+                 !(bool)MQLInfoInteger(MQL_VISUAL_MODE) ? 60 : 1);
    return INIT_SUCCEEDED;
   }
 
@@ -155,8 +176,14 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
-   ChartSetInteger(0, CHART_MOUSE_SCROLL, true);
-   KPF_Cleanup();
+   ChartSetInteger(0, CHART_MOUSE_SCROLL, g_chart_scroll_saved);
+   ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, false);
+   ChartSetInteger(0, CHART_EVENT_MOUSE_WHEEL, false);
+   if(g_is_owner)
+     {
+      KPF_Cleanup();
+      GlobalVariableDel(g_owner_key);
+     }
    KPN_ClearMarks();
    KP_RestoreChartTheme();
    KPC_Destroy();
@@ -180,11 +207,8 @@ void OnTimer()
    if(g_prop.on && g_last_rebuild < KP_ResetAnchor(TimeCurrent()))
       g_dirty = true;
 
-   // risk guards
-   if(KPT_RiskCheck())
-      g_dirty = true;
-
-   // periodic / event-driven full rebuild
+   // rebuild BEFORE the guards run: a trade that just closed must be in
+   // the statistics the daily-loss guard is about to judge
    if(g_dirty || TimeCurrent() >= g_next_rebuild)
      {
       KPData_Rebuild();
@@ -192,18 +216,35 @@ void OnTimer()
       g_dirty = false;
      }
 
+   KPT_PropAnchorTick();
+
+   // ownership heartbeat: a stale claim (crashed instance) is taken over
+   if(g_is_owner)
+      GlobalVariableSet(g_owner_key, (double)(long)TimeCurrent());
+   else if(!GlobalVariableCheck(g_owner_key) ||
+           TimeCurrent() - (datetime)(long)GlobalVariableGet(g_owner_key) > 15)
+      g_is_owner = true;
+
+   // risk guards (owner only)
+   if(g_is_owner && KPT_RiskCheck())
+      g_dirty = true;
+
    // calendar: keep fresh when alerts/marks/guards are on or tab visible
    if(g_news_alert_on || g_news_marks_on || g_ng_block_on || g_ng_flat_on ||
       (g_tab == 7 && !g_collapsed))
       KPN_Refresh(false);
    KPN_CheckAlerts();
 
-   // per-position automation + news auto-flat + delivery channels
-   KPT_TrailTick();
-   KPT_NewsGuardTick();
-   KPTG_Drain();
-   KPTG_DigestTick();
-   KPF_Write();
+   // per-position automation + news auto-flat + delivery channels:
+   // side-effecting subsystems run on the owner instance only
+   if(g_is_owner)
+     {
+      KPT_TrailTick();
+      KPT_NewsGuardTick();
+      KPTG_Drain();
+      KPTG_DigestTick();
+      KPF_Write();
+     }
 
    // re-anchor staggered chart labels as price range drifts
    static datetime last_marks = 0;

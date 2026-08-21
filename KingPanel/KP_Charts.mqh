@@ -166,9 +166,9 @@ void KPCH_PageDaily(const int px, int y, const int cw, const int H)
    int lab_w = KP_S(58);
    int pw = cw - lab_w;
    int take = MathMin(nsrc, 60);
-   int bars_h = MathMin(KP_S(340), (int)((H - KP_S(180)) * 0.9));
-   if(bars_h < KP_S(120)) bars_h = KP_S(120);
-
+   // the hold-time block below is a fixed 7-row table, so whatever is
+   // left over belongs to the bars rather than to a dead band
+   int bars_h = MathMax(KP_S(120), H - KP_S(196));
    y = KPCH_Title(px, y, StringFormat(LL("DAILY P&L (LAST %d)", "日盈亏 (近%d日)"), take));
    double vals[];
    ArrayResize(vals, take);
@@ -221,10 +221,10 @@ void KPCH_PageDaily(const int px, int y, const int cw, const int H)
    int c_l = KP_S(56), c_c = KP_S(52), c_w = KP_S(46), c_n = KP_S(90);
    int hx = px;
    KPC_Fill(px, y, cw, KP_S(14), KP_BG_THEAD);
-   KPC_Lbl(hx + KP_S(3), y + KP_S(2), LL("HOLD", "时长"), KP_TXT_FAINT, 5.8);        hx += c_l;
-   KPC_Lbl(hx + c_c - KP_S(3), y + KP_S(2), LL("TRD", "笔数"), KP_TXT_FAINT, 5.8, 2); hx += c_c;
-   KPC_Lbl(hx + c_w - KP_S(3), y + KP_S(2), "WIN%", KP_TXT_FAINT, 5.8, 2);           hx += c_w;
-   KPC_Lbl(hx + c_n - KP_S(3), y + KP_S(2), LL("NET", "净盈亏"), KP_TXT_FAINT, 5.8, 2);
+   KPC_Lbl(hx + KP_S(3), y + KP_S(2), LL("HOLD", "时长"), KP_TXT_FAINT, 6.2);        hx += c_l;
+   KPC_Lbl(hx + c_c - KP_S(3), y + KP_S(2), LL("TRD", "笔数"), KP_TXT_FAINT, 6.2, 2); hx += c_c;
+   KPC_Lbl(hx + c_w - KP_S(3), y + KP_S(2), LL("WIN%", "胜率"), KP_TXT_FAINT, 6.2, 2);           hx += c_w;
+   KPC_Lbl(hx + c_n - KP_S(3), y + KP_S(2), LL("NET", "净盈亏"), KP_TXT_FAINT, 6.2, 2);
    y += KP_S(15);
    for(int b=0; b<7; b++)
      {
@@ -257,7 +257,7 @@ void KPCH_PageDaily(const int px, int y, const int cw, const int H)
               KP_Duration((long)aw), KP_Duration((long)al));
    if(al > 0 && aw > 0 && aw / al < 0.7)
       s += LL("  — cutting winners, riding losers", "  — 盈利拿不住、亏损扛太久");
-   KPC_Lbl(px, y, s, KP_TXT_DIM, 6.4);
+   KPC_Lbl(px, y, KPU_Trunc(s, cw - KP_S(4), KPU_LblFont(), 6.4), KP_TXT_DIM, 6.4);
   }
 
 //--- page 2: monthly bars + R-multiple distribution -----------------
@@ -273,8 +273,7 @@ void KPCH_PageMonthly(const int px, int y, const int cw, const int H)
    int lab_w = KP_S(58);
    int pw = cw - lab_w;
    int take = MathMin(nsrc, 36);
-   int bars_h = MathMin(KP_S(320), (int)((H - KP_S(200)) * 0.9));
-   if(bars_h < KP_S(120)) bars_h = KP_S(120);
+   int bars_h = MathMax(KP_S(120), H - KP_S(232));
 
    y = KPCH_Title(px, y, StringFormat(LL("MONTHLY P&L (LAST %d)", "月盈亏 (近%d月)"), take));
    double vals[];
@@ -298,42 +297,51 @@ void KPCH_PageMonthly(const int px, int y, const int cw, const int H)
    //-- R-multiple distribution (SL-based R; MAE proxy on small samples)
    y = KPCH_Title(px, y, LL("R-MULTIPLE DISTRIBUTION", "R倍数分布"));
    double edges[7] = {-2, -1, 0, 1, 2, 3, 5};
-   int bins[8];
-   ArrayInitialize(bins, 0);
-   int n_sl = 0, n_proxy = 0;
-   double r_sum = 0;
-   bool use_proxy = (g_close_n <= 2000);
-   for(int i=0; i<g_close_n; i++)
+   // O(closed x cached) - at one render per second on a 13k-trade account
+   // this would dominate the timer, so it is recomputed only when the
+   // statistics behind it actually changed
+   static int      bins[8];
+   static int      n_sl = 0, n_proxy = 0;
+   static double   r_sum = 0;
+   static datetime r_cached = 0;
+   if(r_cached != g_last_rebuild)
      {
-      int gi = g_close_order[i];
-      double r0 = 0;
-      if(g_pos[gi].sl0 > 0 && g_pos[gi].lots > 0)
+      r_cached = g_last_rebuild;
+      ArrayInitialize(bins, 0);
+      n_sl = 0; n_proxy = 0; r_sum = 0;
+      bool use_proxy = (g_close_n <= 2000);
+      for(int i=0; i<g_close_n; i++)
         {
-         double entry = g_pos[gi].vwap_num / g_pos[gi].lots;
-         double ts = SymbolInfoDouble(g_pos[gi].symbol, SYMBOL_TRADE_TICK_SIZE);
-         double tv = SymbolInfoDouble(g_pos[gi].symbol, SYMBOL_TRADE_TICK_VALUE);
-         if(ts > 0 && tv > 0)
-            r0 = MathAbs(entry - g_pos[gi].sl0) / ts * tv * g_pos[gi].lots;
-         if(r0 > 0) n_sl++;
+         int gi = g_close_order[i];
+         double r0 = 0;
+         if(g_pos[gi].sl0 > 0 && g_pos[gi].lots > 0)
+           {
+            double entry = g_pos[gi].vwap_num / g_pos[gi].lots;
+            double ts = SymbolInfoDouble(g_pos[gi].symbol, SYMBOL_TRADE_TICK_SIZE);
+            double tv = SymbolInfoDouble(g_pos[gi].symbol, SYMBOL_TRADE_TICK_VALUE);
+            if(ts > 0 && tv > 0)
+               r0 = MathAbs(entry - g_pos[gi].sl0) / ts * tv * g_pos[gi].lots;
+            if(r0 > 0) n_sl++;
+           }
+         if(r0 <= 0 && use_proxy)
+           {
+            for(int e=0; e<g_exc_n; e++)
+               if(g_exc[e].pos_id == g_pos[gi].pos_id && g_exc[e].mae > 0)
+                 {
+                  r0 = g_exc[e].mae;
+                  n_proxy++;
+                  break;
+                 }
+           }
+         if(r0 <= 0)
+            continue;
+         double r = g_pos[gi].net / r0;
+         r_sum += r;
+         int b = 7;
+         for(int e=0; e<7; e++)
+            if(r < edges[e]) { b = e; break; }
+         bins[b]++;
         }
-      if(r0 <= 0 && use_proxy)
-        {
-         for(int e=0; e<g_exc_n; e++)
-            if(g_exc[e].pos_id == g_pos[gi].pos_id && g_exc[e].mae > 0)
-              {
-               r0 = g_exc[e].mae;
-               n_proxy++;
-               break;
-              }
-        }
-      if(r0 <= 0)
-         continue;
-      double r = g_pos[gi].net / r0;
-      r_sum += r;
-      int b = 7;
-      for(int e=0; e<7; e++)
-         if(r < edges[e]) { b = e; break; }
-      bins[b]++;
      }
    int n_r = n_sl + n_proxy;
    if(n_r < 5)
@@ -361,9 +369,9 @@ void KPCH_PageMonthly(const int px, int y, const int cw, const int H)
            {
             KPC_Fill(bx, y + hist_h - KP_S(4) - bh, bw, bh, c);
             KPC_Num(bx + bw/2, y + hist_h - KP_S(16) - bh, (string)bins[b],
-                    KP_TXT_DIM, 5.8, 1);
+                    KP_TXT_DIM, 6.2, 1);
            }
-         KPC_Num(bx + bw/2, y + hist_h + KP_S(2), bn[b], KP_TXT_FAINT, 5.4, 1);
+         KPC_Num(bx + bw/2, y + hist_h + KP_S(2), bn[b], KP_TXT_FAINT, 6.0, 1);
         }
       y += hist_h + KP_S(14);
       KPC_Lbl(px, y, StringFormat(
@@ -384,8 +392,7 @@ void KPCH_PageDD(const int px, int y, const int cw, const int H)
      }
    int lab_w = KP_S(58);
    int pw = cw - lab_w;
-   int uh = MathMin(KP_S(360), (int)((H - KP_S(150)) * 0.9));
-   if(uh < KP_S(140)) uh = KP_S(140);
+   int uh = MathMax(KP_S(140), H - KP_S(150));
 
    y = KPCH_Title(px, y, LL("UNDERWATER DRAWDOWN", "回撤水下曲线"));
    double uw[];
@@ -422,7 +429,7 @@ void KPCH_PageDD(const int px, int y, const int cw, const int H)
      }
    cur = run;
    KPU_KV(px, ly, colw, LL("CURRENT", "当前"),
-          (cur == 0 ? "-" : StringFormat("%d %s", MathAbs(cur),
+          (cur == 0 ? "-" : StringFormat("%d %s", (int)MathAbs(cur),
            cur > 0 ? LL("WINS", "连胜") : LL("LOSSES", "连亏"))),
           (cur >= 0 ? KP_GREEN : KP_RED));
    KPU_KV(px, ly + KP_S(14), colw, LL("MAX WIN STREAK", "最长连胜"),
@@ -628,7 +635,7 @@ void KPCH_PageMFE(const int px, int y, const int cw, const int H)
       KPC_Lbl(px + KP_S(250), ey + KP_S(2),
               KPU_Trunc(LL("100% = perfect entry & exit at the extremes",
                            "100% = 在极值入场并在反向极值出场"),
-                        cw - KP_S(256), KPU_LblFont(), 5.8), KP_TXT_FAINT, 5.8);
+                        cw - KP_S(256), KPU_LblFont(), 6.2), KP_TXT_FAINT, 5.8);
       ey += 3*KP_S(15) + KP_S(4);
      }
    int scope = MathMin(200, g_tot.closed_trades);
@@ -641,24 +648,33 @@ void KPCH_PageMFE(const int px, int y, const int cw, const int H)
 //--- page 5: session heatmap ----------------------------------------
 void KPCH_PageHeat(const int px, int y, const int cw, const int H)
   {
-   double cell_net[7][24];
-   int    cell_cnt[7][24];
-   ArrayInitialize(cell_net, 0.0);
-   ArrayInitialize(cell_cnt, 0);
-   int  total_n = 0;
-   bool weekend = false;
-   for(int i=0; i<g_pos_count; i++)
+   // cached on the rebuild stamp: a full pass over every closed position
+   // must not run once per second just to repaint the same grid
+   static double   cell_net[7][24];
+   static int      cell_cnt[7][24];
+   static int      total_n = 0;
+   static bool     weekend = false;
+   static datetime heat_cached = 0;
+   if(heat_cached != g_last_rebuild)
      {
-      if(!g_pos[i].closed)
-         continue;
-      MqlDateTime ct;
-      TimeToStruct(g_pos[i].close_time, ct);
-      int r2 = (ct.day_of_week == 0 ? 6 : ct.day_of_week - 1);
-      cell_net[r2][ct.hour] += g_pos[i].net;
-      cell_cnt[r2][ct.hour]++;
-      if(r2 >= 5)
-         weekend = true;
-      total_n++;
+      heat_cached = g_last_rebuild;
+      ArrayInitialize(cell_net, 0.0);
+      ArrayInitialize(cell_cnt, 0);
+      total_n = 0;
+      weekend = false;
+      for(int i=0; i<g_pos_count; i++)
+        {
+         if(!g_pos[i].closed)
+            continue;
+         MqlDateTime ct;
+         TimeToStruct(g_pos[i].close_time, ct);
+         int r2 = (ct.day_of_week == 0 ? 6 : ct.day_of_week - 1);
+         cell_net[r2][ct.hour] += g_pos[i].net;
+         cell_cnt[r2][ct.hour]++;
+         if(r2 >= 5)
+            weekend = true;
+         total_n++;
+        }
      }
    if(total_n < 1)
      {
@@ -691,14 +707,14 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
    int grid_h = ch2 * nrows;
 
    for(int h2=0; h2<24; h2+=3)
-      KPC_Num(lx0 + (int)(h2*cwid), y, StringFormat("%02d", h2), KP_TXT_FAINT, 5.8);
+      KPC_Num(lx0 + (int)(h2*cwid), y, StringFormat("%02d", h2), KP_TXT_FAINT, 6.2);
 
    string dle[7] = {"MON","TUE","WED","THU","FRI","SAT","SUN"};
    string dlc[7] = {"周一","周二","周三","周四","周五","周六","周日"};
    for(int r2=0; r2<nrows; r2++)
      {
       int ry2 = gy0 + r2*ch2;
-      KPC_Lbl(px, ry2 + (ch2 - KP_S(10))/2, LL(dle[r2], dlc[r2]), KP_TXT_DIM, 5.8);
+      KPC_Lbl(px, ry2 + (ch2 - KP_S(10))/2, LL(dle[r2], dlc[r2]), KP_TXT_DIM, 6.2);
       double rowsum = 0;
       for(int h2=0; h2<24; h2++)
         {
@@ -714,7 +730,7 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
          if(cell_cnt[r2][h2] > 0 && cx1 - cx0 >= KP_S(14) && ch2 >= KP_S(15))
             KPC_Num(cx0 + (cx1 - cx0)/2, ry2 + (ch2 - KP_S(9))/2,
                     (string)cell_cnt[r2][h2],
-                    (frac > 0.5 ? KP_BG : KP_TXT_DIM), 5.4, 1);
+                    (frac > 0.5 ? KP_BG : KP_TXT_DIM), 6.0, 1);
         }
       KPC_Num(px + cw - KP_S(2), ry2 + (ch2 - KP_S(10))/2,
               KP_MoneySigned(rowsum, 0), KP_PLColor(rowsum), 6.0, 2);
@@ -742,7 +758,10 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
             KPC_Fill(lx0 + (int)(h2*cwid), yb,
                      (int)MathCeil(cwid) - 1, KP_S(3), sc2[s3]);
         }
-      KPC_Num(px + cw - KP_S(2), yb - KP_S(3), sn2[s3], sc2[s3], 5.0, 2);
+      // names need their own stride: the 4 px bar pitch is far smaller
+      // than a glyph, so sharing it stacked all four into one smear
+      KPC_Num(lx0 + gw2 + KP_S(6) + s3*KP_S(30), sy2 - KP_S(1),
+              sn2[s3], sc2[s3], 6.0, 0);
      }
 
    int by0 = sy2 + KP_S(20);

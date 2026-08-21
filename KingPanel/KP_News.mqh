@@ -74,6 +74,7 @@ bool      g_ng_block_on  = false;   // block new orders around events
 bool      g_ng_flat_on   = false;   // close exposed positions before events
 int       g_ng_before    = 15;      // minutes before event
 int       g_ng_after     = 10;      // minutes after event
+int       g_ng_stars     = 3;       // guard threshold, independent of alerts
 
 // does the event currency touch this symbol?
 bool KPN_SymTouches(const string sym, const string cur)
@@ -91,7 +92,7 @@ bool KPN_ActiveEvent(const string sym, string &ev_name, string &ev_cur,
    datetime now = TimeCurrent();
    for(int i=0; i<g_news_count; i++)
      {
-      if(g_news[i].importance < g_news_stars)
+      if(g_news[i].importance < g_ng_stars)
          continue;
       if(!KPN_CurOK(g_news[i].cur))
          continue;
@@ -131,6 +132,7 @@ void KPN_LoadSettings(const bool def_alert, const int def_stars,
    g_ng_flat_on  = (KP_StoreGet("ng_flat", 0) > 0.5);
    g_ng_before   = (int)MathMax(1.0, MathMin(120.0, KP_StoreGet("ng_before", 15)));
    g_ng_after    = (int)MathMax(0.0, MathMin(120.0, KP_StoreGet("ng_after", 10)));
+   g_ng_stars    = (int)MathMax(1.0, MathMin(3.0, KP_StoreGet("ng_stars", g_news_stars)));
   }
 
 void KPN_SaveSettings()
@@ -145,6 +147,7 @@ void KPN_SaveSettings()
    KP_StoreSet("ng_flat",   g_ng_flat_on ? 1 : 0);
    KP_StoreSet("ng_before", g_ng_before);
    KP_StoreSet("ng_after",  g_ng_after);
+   KP_StoreSet("ng_stars",  g_ng_stars);
   }
 
 //--- format a calendar long value (x / 1e6) -------------------------
@@ -380,7 +383,8 @@ void KPN_CheckAlerts()
       g_alerted[n] = g_news[i].vid;
       g_alerted_n++;
       KP_StoreSet("nvl_" + (string)g_news[i].vid, 1);
-      string am = StringFormat("%s %s  in %d min  (fcst %s / prev %s)",
+      string am = StringFormat(LL("%s %s  in %d min  (fcst %s / prev %s)",
+                                  "%s %s  %d 分钟后  (预测 %s / 前值 %s)"),
                   g_news[i].cur, g_news[i].name, (int)(dt/60),
                   g_news[i].v_fcst, g_news[i].v_prev);
       Alert("[KING PANEL] " + am);

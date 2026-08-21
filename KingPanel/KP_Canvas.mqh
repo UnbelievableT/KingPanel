@@ -54,7 +54,16 @@ int KPC_HitTest(const int x, const int y)
 //--- canvas lifecycle -----------------------------------------------
 bool KPC_Create(const int x, const int y, const int w, const int h)
   {
-   if(!g_cv.CreateBitmapLabel(0, 0, KP_OBJ, x, y, w, h, COLOR_FORMAT_ARGB_NORMALIZE))
+   // XRGB_NOALPHA, not ARGB_*: GDI text rendering does not preserve the
+   // alpha channel, so with an alpha-aware format every antialiased
+   // glyph edge becomes semi-transparent and composites against the
+   // CHART instead of the panel - that is what makes text look fuzzy.
+   // The panel is fully opaque by design, so ignoring alpha is correct.
+   // a leftover object from a hard-killed instance would make every
+   // future CreateBitmapLabel fail, bricking the panel permanently
+   if(ObjectFind(0, KP_OBJ) >= 0)
+      ObjectDelete(0, KP_OBJ);
+   if(!g_cv.CreateBitmapLabel(0, 0, KP_OBJ, x, y, w, h, COLOR_FORMAT_XRGB_NOALPHA))
       return false;
    ObjectSetInteger(0, KP_OBJ, OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, KP_OBJ, OBJPROP_SELECTABLE, false);

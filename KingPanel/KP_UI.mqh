@@ -63,6 +63,7 @@
 #define KPHIT_NG_BEFORE  50
 #define KPHIT_NG_AFTER   51
 #define KPHIT_EXPORT     52
+#define KPHIT_NG_STARS   53
 
 //--- ui state --------------------------------------------------------
 int    g_tab        = 0;      // 0..7
@@ -72,7 +73,7 @@ int    g_panel_y    = 30;
 int    g_scroll[10] = {0,0,0,0,0,0,0,0,0,0};
 int    g_period     = 0;      // 0 D 1 W 2 M 3 Y
 int    g_curve_src  = 0;      // 0 balance history, 1 session equity
-bool   g_sort_desc  = true;
+bool   g_sort_desc_tab[4] = {true,true,true,true};   // per aggregation tab
 int    g_modal      = 0;      // 0 none, 1 charts
 int    g_chart_sel  = 0;      // 0 equity 1 daily 2 monthly 3 dd 4 mfe/mae
 int    g_pos_sub    = 0;      // 0 positions, 1 pending orders
@@ -85,10 +86,13 @@ int    g_ot_tp      = 0;      // points, 0 = none
 int    g_ot_dist    = 200;    // pending distance, points
 int    g_ot_mode    = 0;      // sizing: 0 = fixed lots, 1 = risk %
 double g_ot_risk    = 1.0;    // risk per trade, % of equity
+string g_ot_lots_sym = "";    // symbol the stored lot size belongs to
 
 bool   g_dragging   = false;
 int    g_drag_dx    = 0;
 int    g_drag_dy    = 0;
+bool   g_hover_panel = false;          // cursor inside the panel rect
+bool   g_chart_scroll_saved = true;    // user's CHART_MOUSE_SCROLL setting
 
 //--- layout constants (unscaled px) ---------------------------------
 #define KPL_PAD    6
@@ -132,6 +136,14 @@ int KPU_PanelH()
    int min_h = frame + KP_S(380);   // tallest fixed layout + fractional-DPI rounding margin
    if(chart_h <= 0 || h < min_h)
       h = min_h;
+   // ORDER and RISK are fixed-height forms with nothing to stretch, so
+   // sizing them to the whole window just paints a large empty band
+   if(g_modal == 0 && (g_tab == 5 || g_tab == 6))
+     {
+      int form_h = frame + KP_S(g_tab == 5 ? 216 : 322);
+      if(form_h < h)
+         h = form_h;
+     }
    g_content_h = h - frame;
    return h;
   }
@@ -147,7 +159,7 @@ int KPU_VisRows(const int slot)
       case 2: case 3:    ovh = 63;  break;   // agg: section+head+footer line
       case 4: case 8:    ovh = 96;  break;   // trade: summary+ops+subtabs+head
       case 7:            ovh = 127; break;   // news: 3 toolbars+currencies+head+countdown
-      case 9:            ovh = 96;  break;   // fleet accounts list
+      case 9:            ovh = 112; break;   // fleet: chrome + summary row
      }
    if(g_content_h <= 0)
       return 12;
@@ -397,7 +409,7 @@ void KPU_DrawOverview(const int W, const int y0)
                  c = (g_acc.margin > 0.0000001 && g_acc.margin_level < 200 ? KP_RED : KP_TXT);
                  break;
         }
-      KPC_Lbl(x + KP_S(5), y + KP_S(4), lab, KP_TXT_FAINT, 5.8);
+      KPC_Lbl(x + KP_S(5), y + KP_S(4), lab, KP_TXT_FAINT, 6.2);
       KPC_Num(x + tw - KP_S(5), y + KP_S(17), v, c, 9.6, 2, true);
      }
    y += th + KP_S(7);
@@ -414,7 +426,10 @@ void KPU_DrawOverview(const int W, const int y0)
    KPU_Chip(bx + (bw + KP_S(3))*2, sy, bw, bh, LL("FULL", "大图"), false, KPHIT_EXPAND, 0, 6.2);
 
    // curve absorbs whatever height the window grants beyond the fixed rows
-   int chh = MathMax(KP_S(88), MathMin(KP_S(460), g_content_h - KP_S(284)));
+   // the curve is the one element that scales gracefully, so it takes
+   // whatever the fixed rows leave over instead of capping at 460 and
+   // stranding a dead band above the footer on tall charts
+   int chh = MathMax(KP_S(88), g_content_h - KP_S(284));
    KPC_Fill(px, y, cw, chh, KP_BG_CELL);
    KPC_Frame(px, y, cw, chh, KP_SEP);
    for(int i=1; i<4; i++)
@@ -466,9 +481,12 @@ void KPU_DrawOverview(const int W, const int y0)
           KP_Money(g_tot.gross_profit), KP_GREEN);
    KPU_KV(x1, gy+rh*2, colw, LL("GROSS LOSS", "总亏损"),
           KP_Money(g_tot.gross_loss), KP_RED);
+   bool pf_inf = (g_tot.gross_loss > -0.0000001 && g_tot.gross_profit > 0);
    KPU_KV(x1, gy+rh*3, colw, LL("PROFIT FACTOR", "盈利因子"),
-          (g_tot.profit_factor>0 ? DoubleToString(g_tot.profit_factor,2) : "--"),
-          (g_tot.profit_factor >= 1.0 ? KP_GREEN : KP_RED));
+          (pf_inf ? LL("no losses", "无亏损") :
+           g_tot.profit_factor > 0 ? DoubleToString(g_tot.profit_factor,2) : "--"),
+          (pf_inf || g_tot.profit_factor >= 1.0 ? KP_GREEN :
+           g_tot.profit_factor > 0 ? KP_RED : KP_TXT_DIM));
    KPU_KV(x1, gy+rh*4, colw, LL("EXPECTANCY", "期望值"),
           KP_MoneySigned(g_tot.expectancy), KP_PLColor(g_tot.expectancy));
    KPU_KV(x1, gy+rh*5, colw, LL("MAX DRAWDOWN", "最大回撤"),
@@ -527,18 +545,22 @@ void KPU_DrawOverview(const int W, const int y0)
    KPC_Lbl(ex, y + KP_S(4), LL("ALGO", "EA算法"), KP_CYAN, 6.4);
    KPC_Lbl(ex + ew, y + KP_S(4), LL("MANUAL", "手动"), KP_TXT_DIM, 6.4, 2);
    KPC_SplitBar(ex, y + KP_S(17), ew, KP_S(7), eshare, KP_CYAN, KP_AMBER_DIM);
-   KPC_Num(ex, y + KP_S(28), StringFormat("%d (%.1f%%) %s", g_tot.ea_trades,
-           eshare*100.0, KP_MoneySigned(g_tot.ea_profit,0)), KP_TXT_FAINT, 6.2);
-   KPC_Num(ex + ew, y + KP_S(28), StringFormat("%d %s", g_tot.manual_trades,
-           KP_MoneySigned(g_tot.manual_profit,0)), KP_TXT_FAINT, 6.2, 2);
+   string s_algo = StringFormat("%d (%.0f%%) %s", g_tot.ea_trades, eshare*100.0,
+                   (g_tot.ea_profit >= 0 ? "+" : "") + KP_MoneyAuto(g_tot.ea_profit));
+   string s_man  = StringFormat("%d %s", g_tot.manual_trades,
+                   (g_tot.manual_profit >= 0 ? "+" : "") + KP_MoneyAuto(g_tot.manual_profit));
+   KPC_Num(ex, y + KP_S(28),
+           KPU_Trunc(s_algo, ew/2 - KP_S(4), KP_FontMono, 6.2), KP_TXT_FAINT, 6.2);
+   KPC_Num(ex + ew, y + KP_S(28),
+           KPU_Trunc(s_man, ew/2 - KP_S(4), KP_FontMono, 6.2), KP_TXT_FAINT, 6.2, 2);
 
    int mx2 = px + seg*2 + KP_S(10);
    int mw = seg - KP_S(16);
-   KPU_KV(mx2, y + KP_S(2),  mw, LL("TODAY", "今日"),
+   KPU_KV(mx2, y + KP_S(2),  mw, LL("TODAY CLOSED", "今日已平"),
           KP_MoneySigned(g_tot.today_pl), KP_PLColor(g_tot.today_pl));
-   KPU_KV(mx2, y + KP_S(16), mw, LL("WEEK", "本周"),
+   KPU_KV(mx2, y + KP_S(16), mw, LL("WEEK CLOSED", "本周已平"),
           KP_MoneySigned(g_tot.week_pl),  KP_PLColor(g_tot.week_pl));
-   KPU_KV(mx2, y + KP_S(30), mw, LL("MONTH", "本月"),
+   KPU_KV(mx2, y + KP_S(30), mw, LL("MONTH CLOSED", "本月已平"),
           KP_MoneySigned(g_tot.month_pl), KP_PLColor(g_tot.month_pl));
 
    KPC_VLine(px + seg - KP_S(2), y + KP_S(4), y + wh - KP_S(4), KP_SEP);

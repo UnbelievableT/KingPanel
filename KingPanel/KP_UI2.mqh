@@ -86,14 +86,14 @@ void KPU_DrawAnalysis(const int W, const int y0)
                    i == 2 ? LL("M", "月") : LL("Y", "年"));
       KPU_Chip(px + i*(bw+KP_S(3)), y, bw, bh, pn, g_period == i, KPHIT_PERIOD, i, 6.8);
      }
-   KPC_Lbl(px + cw, y + KP_S(3), LL("BY CLOSE TIME · INCL FEES", "按平仓时间归集 · 含手续费"),
+   KPC_Lbl(px + cw, y + KP_S(3), LL("BY CLOSE TIME · NET OF ALL FEES", "按平仓时间归集 · 已含全部费用"),
            KP_TXT_FAINT, 6.0, 2);
    y += bh + KP_S(5);
 
    // columns
    int c_lbl = KP_S(68), c_ord = KP_S(38), c_lot = KP_S(44), c_win = KP_S(40);
    int c_gw  = KP_S(64), c_gl  = KP_S(64), c_dd = KP_S(60), c_ddp = KP_S(46);
-   int c_net = cw - KP_S(16) - c_lbl - c_ord - c_lot - c_win - c_gw - c_gl - c_dd - c_ddp;
+   int c_net = cw - c_lbl - c_ord - c_lot - c_win - c_gw - c_gl - c_dd - c_ddp;
    int hx = px;
 
    KPC_Fill(px, y, cw, KP_S(KPL_THEAD), KP_BG_THEAD);
@@ -154,23 +154,37 @@ void KPU_DrawAnalysis(const int W, const int y0)
    // summary row (whole history)
    KPC_Fill(px, y, cw, rh, KP_BG_THEAD);
    KPC_HLine(px, px+cw-1, y, KP_AMBER_DIM);
-   double swr = g_tot.win_rate;
+   // sum the SAME array the rows above display so the column adds up
+   int    t_trd = 0, t_win = 0;
+   double t_lot = 0, t_gw = 0, t_gl = 0, t_net = 0;
+   for(int i=0; i<n; i++)
+     {
+      KPAggRow rr;
+      if(g_period == 0) rr = g_days[i];
+      else if(g_period == 1) rr = g_weeks[i];
+      else if(g_period == 2) rr = g_months[i];
+      else rr = g_years[i];
+      t_trd += rr.trades;     t_win += rr.wins;
+      t_lot += rr.lots;       t_gw  += rr.gross_win;
+      t_gl  += rr.gross_loss; t_net += rr.profit;
+     }
+   double swr = (t_trd > 0 ? 100.0*t_win/t_trd : 0.0);
    int sx = px, sy2 = y + KP_S(3);
    KPC_Lbl(sx + KP_S(3), sy2, LL("TOTAL", "汇总"), KP_AMBER, 6.8, 0, true);  sx += c_lbl;
-   KPC_Num(sx + c_ord - KP_S(3), sy2, (string)g_tot.closed_trades, KP_TXT, 6.8, 2); sx += c_ord;
-   KPC_Num(sx + c_lot - KP_S(3), sy2, KP_Lots(g_tot.lots), KP_TXT, 6.8, 2); sx += c_lot;
+   KPC_Num(sx + c_ord - KP_S(3), sy2, (string)t_trd, KP_TXT, 6.8, 2); sx += c_ord;
+   KPC_Num(sx + c_lot - KP_S(3), sy2, KP_Lots(t_lot), KP_TXT, 6.8, 2); sx += c_lot;
    KPC_Num(sx + c_win - KP_S(3), sy2, KP_Pct(swr,0), (swr>=50 ? KP_GREEN : KP_TXT_DIM), 6.8, 2); sx += c_win;
-   KPC_Num(sx + c_gw - KP_S(3), sy2, KP_Money(g_tot.gross_profit,0), KP_GREEN, 6.8, 2); sx += c_gw;
-   KPC_Num(sx + c_gl - KP_S(3), sy2, KP_Money(g_tot.gross_loss,0), KP_RED, 6.8, 2); sx += c_gl;
+   KPC_Num(sx + c_gw - KP_S(3), sy2, KP_Money(t_gw,0), KP_GREEN, 6.8, 2); sx += c_gw;
+   KPC_Num(sx + c_gl - KP_S(3), sy2, KP_Money(t_gl,0), KP_RED, 6.8, 2); sx += c_gl;
    KPC_Num(sx + c_dd - KP_S(3), sy2, KP_Money(g_tot.max_dd,0), KP_RED, 6.8, 2); sx += c_dd;
    KPC_Num(sx + c_ddp - KP_S(3), sy2, KP_Pct(g_tot.max_dd_pct), KP_RED, 6.8, 2); sx += c_ddp;
-   KPC_Num(sx + c_net - KP_S(3), sy2, KP_MoneySigned(g_tot.net,1), KP_PLColor(g_tot.net), 6.8, 2, true);
+   KPC_Num(sx + c_net - KP_S(3), sy2, KP_MoneySigned(t_net,1), KP_PLColor(t_net), 6.8, 2, true);
 
    KPU_ScrollUI(W - KP_S(18), table_y, vis*rh, 1);
   }
 
 //--- symbols / magic shared table -----------------------------------
-void KPU_SortIdx(const KPAggRow &rows[], int &idx[])
+void KPU_SortIdx(const KPAggRow &rows[], int &idx[], const bool desc)
   {
    int n = ArraySize(rows);
    ArrayResize(idx, n);
@@ -180,8 +194,8 @@ void KPU_SortIdx(const KPAggRow &rows[], int &idx[])
       int k = idx[i];
       double v = rows[k].profit;
       int j = i - 1;
-      while(j >= 0 && (g_sort_desc ? rows[idx[j]].profit < v
-                                   : rows[idx[j]].profit > v))
+      while(j >= 0 && (desc ? rows[idx[j]].profit < v
+                            : rows[idx[j]].profit > v))
         {
          idx[j+1] = idx[j];
          j--;
@@ -211,7 +225,7 @@ void KPU_DrawAggTable(const int W, const int y0, const KPAggRow &rows[],
    KPC_Lbl(hx + c_ord - KP_S(3), ty, LL("TRADES", "订单"), KP_TXT_DIM, 6.4, 2); hx += c_ord;
    KPC_Lbl(hx + c_lot - KP_S(3), ty, LL("LOTS", "手数"), KP_TXT_DIM, 6.4, 2);   hx += c_lot;
    KPC_Lbl(hx + c_win - KP_S(3), ty, LL("WIN%", "胜率"), KP_TXT_DIM, 6.4, 2);   hx += c_win;
-   KPC_Text(hx + c_net - KP_S(3), ty, (g_sort_desc ? "▼" : "▲"), KP_AMBER,
+   KPC_Text(hx + c_net - KP_S(3), ty, (g_sort_desc_tab[tab] ? "▼" : "▲"), KP_AMBER,
             KP_FontCJK, 6.0, 2);
    KPC_Lbl(hx + c_net - KP_S(14), ty, LL("NET", "净盈亏"), KP_AMBER, 6.4, 2);
    KPC_AddHit(hx, y, c_net + KP_S(6), KP_S(KPL_THEAD), KPHIT_SORT, tab);
@@ -221,7 +235,7 @@ void KPU_DrawAggTable(const int W, const int y0, const KPAggRow &rows[],
 
    int n = ArraySize(rows);
    int idx[];
-   KPU_SortIdx(rows, idx);
+   KPU_SortIdx(rows, idx, g_sort_desc_tab[tab]);
 
    double amax = 0;
    for(int i=0; i<n; i++)
@@ -396,7 +410,9 @@ void KPU_DrawPositions(const int W, const int y0)
             KPC_Num(xx + c_op - KP_S(3), ry, DoubleToString(g_live[di].price_open, dg), KP_TXT_DIM, 6.8, 2); xx += c_op;
             KPC_Num(xx + c_cp - KP_S(3), ry, DoubleToString(g_live[di].price_cur, dg), KP_TXT, 6.8, 2); xx += c_cp;
             KPC_Num(xx + c_pl - KP_S(3), ry, KP_MoneySigned(g_live[di].profit,1), KP_PLColor(g_live[di].profit), 6.8, 2, true); xx += c_pl;
-            KPC_Num(xx + c_tm - KP_S(3), ry, KP_Duration((long)(TimeCurrent() - g_live[di].time)), KP_TXT_FAINT, 6.4, 2);
+            KPC_Num(xx + c_tm - KP_S(3), ry,
+                    KPU_Trunc(KP_Duration((long)(TimeCurrent() - g_live[di].time)),
+                              c_tm - KP_S(6), KP_FontMono, 6.4), KP_TXT_FAINT, 6.4, 2);
             // automation: BE / trail toggle / close half / close
             bool tr_on = KPT_TrailOn(g_live[di].ticket);
             int bx0 = px + cw - KP_S(70);
@@ -466,7 +482,9 @@ void KPU_DrawPositions(const int W, const int y0)
             KPC_Num(xx + c_pr - KP_S(3), ry, DoubleToString(g_ord[di].price, dg), KP_AMBER, 6.8, 2); xx += c_pr;
             KPC_Num(xx + c_cp - KP_S(3), ry, DoubleToString(g_ord[di].price_cur, dg), KP_TXT, 6.8, 2); xx += c_cp;
             KPC_Num(xx + c_ds - KP_S(3), ry, (string)dist, KP_TXT_DIM, 6.8, 2); xx += c_ds;
-            KPC_Num(xx + c_tm - KP_S(3), ry, KP_Duration((long)(TimeCurrent() - g_ord[di].time)), KP_TXT_FAINT, 6.4, 2);
+            KPC_Num(xx + c_tm - KP_S(3), ry,
+                    KPU_Trunc(KP_Duration((long)(TimeCurrent() - g_ord[di].time)),
+                              c_tm - KP_S(6), KP_FontMono, 6.4), KP_TXT_FAINT, 6.4, 2);
             int cx = px + cw - KP_S(16);
             KPC_Fill(cx, yy + KP_S(2), KP_S(13), rh - KP_S(4), KP_BTN);
             KPC_Num(cx + KP_S(6), yy + KP_S(3), "×", KP_RED, 6.8, 1, true);
@@ -537,7 +555,7 @@ void KPU_DrawPositions(const int W, const int y0)
                     (stale ? KP_TXT_FAINT : KP_PLColor(g_fleet[di].day_pl)), 6.8, 2); xx += c_dy;
             KPC_Num(xx + c_ps - KP_S(3), ry, (string)g_fleet[di].positions, KP_TXT_DIM, 6.8, 2); xx += c_ps;
             if(g_fleet[di].locked)
-               KPC_Num(xx + c_st - KP_S(3), ry, "LOCK", KP_RED, 6.6, 2, true);
+               KPC_Lbl(xx + c_st - KP_S(3), ry, LL("LOCK", "锁定"), KP_RED, 6.6, 2, true);
             else
                KPC_Num(xx + c_st - KP_S(3), ry,
                        (stale ? LL("STALE", "失联") : (string)g_fleet[di].age + "s"),
@@ -565,8 +583,15 @@ void KPU_DrawOrder(const int W, const int y0)
 
    if(g_ot_symbol == "" || !SymbolInfoInteger(g_ot_symbol, SYMBOL_SELECT))
       g_ot_symbol = _Symbol;
+   // a size saved on XAUUSD must not be re-applied to EURUSD
+   if(g_ot_lots_sym != g_ot_symbol)
+     {
+      g_ot_lots_sym = g_ot_symbol;
+      g_ot_lots = 0;                     // re-init from this symbol's minimum
+     }
    double vmin  = SymbolInfoDouble(g_ot_symbol, SYMBOL_VOLUME_MIN);
    double vstep = SymbolInfoDouble(g_ot_symbol, SYMBOL_VOLUME_STEP);
+   int    ld    = (vstep > 0 && vstep < 0.01 ? 3 : 2);   // 0.001-step symbols
    if(g_ot_lots <= 0)
       g_ot_lots = (vmin > 0 ? vmin : 0.01);
 
@@ -604,7 +629,7 @@ void KPU_DrawOrder(const int W, const int y0)
       KPC_Button(vx0, y, KP_S(18), KP_S(18), "-", KP_TXT, KP_BTN, KPHIT_OT_LOTS, 0, "", 7.6, false);
       KPC_Fill(vx0 + KP_S(20), y, KP_S(66), KP_S(18), KP_BG_INPUT);
       KPC_Frame(vx0 + KP_S(20), y, KP_S(66), KP_S(18), KP_SEP);
-      KPC_Num(vx0 + KP_S(53), y + KP_S(3), DoubleToString(g_ot_lots, 2), KP_AMBER, 7.6, 1, true);
+      KPC_Num(vx0 + KP_S(53), y + KP_S(3), DoubleToString(g_ot_lots, ld), KP_AMBER, 7.6, 1, true);
       KPC_Button(vx0 + KP_S(88), y, KP_S(18), KP_S(18), "+", KP_TXT, KP_BTN, KPHIT_OT_LOTS, 1, "", 7.6, false);
       double presets[4] = {0.01, 0.10, 0.50, 1.00};
       for(int i=0; i<4; i++)
@@ -629,8 +654,8 @@ void KPU_DrawOrder(const int W, const int y0)
                   DoubleToString(rpre[i], 2) + "%", on, KPHIT_OT_RISKPRE, i, 6.0);
         }
      }
-   KPC_Num(px + cw, y + KP_S(4),
-           StringFormat("MIN %s STEP %s", DoubleToString(vmin, 2), DoubleToString(vstep, 2)),
+   KPC_Num(px + cw, y + KP_S(2),
+           StringFormat("MIN %s STEP %s", DoubleToString(vmin, ld), DoubleToString(vstep, ld)),
            KP_TXT_FAINT, 6.0, 2);
    y += KP_S(24);
 
@@ -772,7 +797,8 @@ void KPU_RiskRow(const int px, const int cw, int y, const string title,
    KPC_Frame(px, y, cw, rh, KP_SEP);
    KPC_Fill(px, y, KP_S(3), rh, (on ? KP_AMBER : KP_SEP));
    KPC_Lbl(px + KP_S(10), y + KP_S(5), title, KP_TXT, 7.2, 0, true);
-   KPC_Lbl(px + KP_S(10), y + KP_S(24), desc, KP_TXT_FAINT, 6.0);
+   KPC_Lbl(px + KP_S(10), y + KP_S(24),
+           KPU_Trunc(desc, cw - KP_S(216), KPU_LblFont(), 6.0), KP_TXT_FAINT, 6.0);
 
    int vx = px + cw - KP_S(196);
    KPC_Button(vx, y + KP_S(11), KP_S(18), KP_S(20), "-", KP_TXT, KP_BTN,
@@ -934,11 +960,19 @@ void KPU_DrawNews(const int W, const int y0)
    KPC_Button(gx1 + KP_S(30), y, KP_S(14), KP_S(16), "-", KP_TXT, KP_BTN, KPHIT_NG_AFTER, 0, "", 6.8, false);
    KPC_Num(gx1 + KP_S(60), y + KP_S(3), (string)g_ng_after + "M", KP_TXT, 6.2, 1);
    KPC_Button(gx1 + KP_S(76), y, KP_S(14), KP_S(16), "+", KP_TXT, KP_BTN, KPHIT_NG_AFTER, 1, "", 6.8, false);
-   if(cw >= KP_S(560))
+   // the guards carry their OWN importance threshold: the star stepper in
+   // the row above governs alerts and chart marks only
+   int gx2 = gx1 + KP_S(102);
+   KPC_Button(gx2, y, KP_S(14), KP_S(16), "-", KP_TXT, KP_BTN, KPHIT_NG_STARS, 0, "", 6.8, false);
+   KPC_Text(gx2 + KP_S(32), y + KP_S(3),
+            (g_ng_stars == 3 ? "★★★" : g_ng_stars == 2 ? "★★" : "★"),
+            KP_YELLOW, KP_FontCJK, 6.2, 1);
+   KPC_Button(gx2 + KP_S(50), y, KP_S(14), KP_S(16), "+", KP_TXT, KP_BTN, KPHIT_NG_STARS, 1, "", 6.8, false);
+   if(cw >= KP_S(600))
       KPC_Lbl(px + cw, y + KP_S(3),
-              LL("GUARD: block entries / auto-flat exposed symbols",
-                 "护盾: 事件窗拦截开单 / 提前平掉相关货币持仓"),
-              KP_TXT_FAINT, 5.8, 2);
+              LL("GUARD: blocks entries / flattens exposed symbols",
+                 "护盾: 拦截开单 / 平掉相关货币持仓"),
+              KP_TXT_FAINT, 6.2, 2);
    y += KP_S(18);
 
    // table head
@@ -949,7 +983,7 @@ void KPU_DrawNews(const int W, const int y0)
    int ty = y + KP_S(4), hx = px;
    KPC_Lbl(hx + KP_S(3), ty, LL("TIME", "时间"), KP_TXT_DIM, 6.4);   hx += c_tm;
    KPC_Lbl(hx, ty, LL("CCY", "货币"), KP_TXT_DIM, 6.4);              hx += c_cur + c_imp;
-   KPC_Lbl(hx, ty, LL("EVENT", "事件"), KP_TXT_DIM, 6.4);            hx += c_nm;
+   KPC_Lbl(hx + KP_S(4), ty, LL("EVENT", "事件"), KP_TXT_DIM, 6.4);   hx += c_nm;
    KPC_Lbl(hx + c_pv - KP_S(3), ty, LL("PREV", "前值"), KP_TXT_DIM, 6.4, 2);  hx += c_pv;
    KPC_Lbl(hx + c_fc - KP_S(3), ty, LL("FCST", "预测"), KP_TXT_DIM, 6.4, 2);  hx += c_fc;
    KPC_Lbl(hx + c_ac - KP_S(3), ty, LL("ACT", "公布"), KP_TXT_DIM, 6.4, 2);
@@ -1062,8 +1096,15 @@ bool KPU_OnClick(const int lx, const int ly)
          return true;
 
       case KPHIT_SORT:
-         g_sort_desc = !g_sort_desc;
+        {
+         int st = (int)arg;                 // 2 = symbols, 3 = magics
+         if(st == 2 || st == 3)
+           {
+            g_sort_desc_tab[st] = !g_sort_desc_tab[st];
+            g_scroll[st] = 0;               // ranking changed under the view
+           }
          return true;
+        }
 
       case KPHIT_SCROLLUP:
          g_scroll[(int)arg] = MathMax(0, g_scroll[(int)arg] - 3);
@@ -1087,6 +1128,12 @@ bool KPU_OnClick(const int lx, const int ly)
       case KPHIT_DELPEND:
       case KPHIT_CLOSETK:
       case KPHIT_DELTK:
+        {
+         static uint last_close_ms = 0;
+         if(GetTickCount() - last_close_ms < 400)
+            return true;
+         last_close_ms = GetTickCount();
+         }
          // one-click: waiting for a confirm just slips the price
          if(id == KPHIT_CLOSEOP)      KPT_CloseBy((int)arg);
          else if(id == KPHIT_DELPEND) KPT_DeletePendings();
@@ -1106,7 +1153,14 @@ bool KPU_OnClick(const int lx, const int ly)
            {
             g_risk.floor_on = !g_risk.floor_on;
             if(g_risk.floor_on && g_risk.floor_val <= 0)
+              {
                g_risk.floor_val = MathFloor(g_acc.equity * 0.9 / 10) * 10;
+               if(g_risk.floor_val <= 0)   // would show ON but be inert
+                 {
+                  g_risk.floor_on = false;
+                  KPT_RiskMsg(LL("Set a floor value first", "请先设置保护线数值"));
+                 }
+              }
            }
          if(which == 3)
            {
@@ -1128,10 +1182,12 @@ bool KPU_OnClick(const int lx, const int ly)
               {
                // already beyond the limit when armed: lock new orders
                // only, leave existing positions untouched
+               // lock only: KPT_Market/KPT_Pending already refuse while
+               // locked, and cancelling another EA's working orders is
+               // not something arming a display guard may do
                g_prop.lock_until = KP_ResetAnchor(TimeCurrent()) + 86400;
-               KPT_DeletePendings();
-               KPT_RiskMsg(LL("Armed beyond limit: orders locked, positions untouched",
-                              "武装时已超限: 仅锁定下单, 不动持仓"));
+               KPT_RiskMsg(LL("Armed beyond limit: orders locked, nothing cancelled",
+                              "武装时已超限: 仅锁定下单, 未平仓未撤单"));
               }
             if(!g_prop.on)
                g_prop.lock_until = 0;   // explicit disarm clears the lockout
@@ -1210,6 +1266,13 @@ bool KPU_OnClick(const int lx, const int ly)
 
       case KPHIT_NG_BLOCK:
          g_ng_block_on = !g_ng_block_on;
+         KPN_SaveSettings();
+         return true;
+
+      case KPHIT_NG_STARS:
+         g_ng_stars += ((int)arg == 1 ? 1 : -1);
+         if(g_ng_stars < 1) g_ng_stars = 1;
+         if(g_ng_stars > 3) g_ng_stars = 3;
          KPN_SaveSettings();
          return true;
 
@@ -1361,6 +1424,15 @@ bool KPU_OnClick(const int lx, const int ly)
       case KPHIT_OT_SELL:
       case KPHIT_OT_PEND:
         {
+         // one-click stays, but a reflex double-click must not send two
+         // full-size orders; 600 ms is below deliberate re-click speed
+         static uint last_send_ms = 0;
+         if(GetTickCount() - last_send_ms < 600)
+           {
+            KPT_RiskMsg(LL("duplicate click ignored", "重复点击已忽略"));
+            return true;
+           }
+         last_send_ms = GetTickCount();
          // one-click execution: a confirm step only costs slippage
          int pdir = (id == KPHIT_OT_SELL ? 1 :
                      id == KPHIT_OT_BUY  ? 0 :
@@ -1427,6 +1499,20 @@ bool KPU_OnWheel(const int cx, const int cy, const int delta)
 bool KPU_OnMouse(const int cx, const int cy, const uint flags)
   {
    bool left = ((flags & 1) != 0);
+
+   // hovering the panel must suppress chart scrolling, otherwise the
+   // wheel scrolls our list AND the chart underneath at the same time
+   int hx = cx - g_panel_x, hy = cy - g_panel_y;
+   bool inside = (!g_collapsed && hx >= 0 && hy >= 0 &&
+                  hx < KPU_PanelW() && hy < KPU_PanelH());
+   if(inside != g_hover_panel)
+     {
+      g_hover_panel = inside;
+      if(inside)
+         g_chart_scroll_saved = (bool)ChartGetInteger(0, CHART_MOUSE_SCROLL);
+      if(!g_dragging)
+         ChartSetInteger(0, CHART_MOUSE_SCROLL, inside ? false : g_chart_scroll_saved);
+     }
    if(!g_dragging)
      {
       if(!left)
@@ -1445,7 +1531,9 @@ bool KPU_OnMouse(const int cx, const int cy, const uint flags)
    if(!left)
      {
       g_dragging = false;
-      ChartSetInteger(0, CHART_MOUSE_SCROLL, true);
+      // restore what the user had, not a hardcoded true
+      ChartSetInteger(0, CHART_MOUSE_SCROLL,
+                      g_hover_panel ? false : g_chart_scroll_saved);
       KP_StoreSet("ui_x", g_panel_x);
       KP_StoreSet("ui_y", g_panel_y);
       KPU_Render();   // height depends on panel y: resize on release

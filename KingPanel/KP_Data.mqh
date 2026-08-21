@@ -158,6 +158,7 @@ struct KPTotals
    double            week_pl;
    double            month_pl;
    double            reset_pl;        // realized net since the prop-day reset anchor
+   double            reset_cash;      // deposits/withdrawals since that anchor
   };
 
 //--- module state ----------------------------------------------------
@@ -420,7 +421,11 @@ void KPData_UpdateAccount()
    g_acc.margin       = AccountInfoDouble(ACCOUNT_MARGIN);
    g_acc.margin_free  = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
    g_acc.margin_level = AccountInfoDouble(ACCOUNT_MARGIN_LEVEL);
-   g_acc.floating_pl  = g_acc.equity - g_acc.balance;
+   // equity = balance + credit + floating, so a bonus/credit account
+   // would otherwise report a permanent phantom floating profit and bias
+   // every floating guard (loss, profit, prop day budget)
+   g_acc.floating_pl  = g_acc.equity - g_acc.balance
+                      - AccountInfoDouble(ACCOUNT_CREDIT);
    g_acc.positions    = PositionsTotal();
    g_acc.pendings     = OrdersTotal();
    g_acc.algo_ok      = (bool)TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)
@@ -453,6 +458,19 @@ void KPData_UpdateLive()
       p.profit     = PositionGetDouble(POSITION_PROFIT) + p.swap;
       p.time       = (datetime)PositionGetInteger(POSITION_TIME);
       g_live[g_live_count++] = p;
+     }
+   // stable order: rows must never reshuffle under the cursor between
+   // renders, or a per-row close button hits a different ticket
+   for(int a=1; a<g_live_count; a++)
+     {
+      KPLivePos key = g_live[a];
+      int b = a - 1;
+      while(b >= 0 && g_live[b].ticket > key.ticket)
+        {
+         g_live[b+1] = g_live[b];
+         b--;
+        }
+      g_live[b+1] = key;
      }
 
    // pending orders
@@ -525,6 +543,11 @@ void KPData_Rebuild()
         }
       g_hist_fp = fp;
      }
+   // a failed select must leave the previous statistics AND the previous
+   // rebuild stamp intact - zeroing them would tell the prop guard the
+   // day is flat and relax the daily-loss limit
+   if(!HistorySelect(0, TimeCurrent() + 86400))
+      return;
    g_last_rebuild = TimeCurrent();
 
    // reset
@@ -537,9 +560,6 @@ void KPData_Rebuild()
    ArrayFree(g_curve_trd);
    g_curve_n = 0;
 
-   if(!HistorySelect(0, TimeCurrent() + 86400))
-      return;
-
    int deals = HistoryDealsTotal();
    CHashMap<long,int> posmap;
 
@@ -550,7 +570,9 @@ void KPData_Rebuild()
 
    double bal = 0.0;   // running actual balance
    double trd = 0.0;   // running trading-only pl
-   double peak_trd = 0.0, peak_bal = 0.0;
+   // seeded on the first evaluation like KP_RowDD does per bucket;
+   // leaving peak_bal at 0 made the first drawdown report 0.0%
+   double peak_trd = -DBL_MAX, peak_bal = 0.0;
 
    for(int i=0; i<deals; i++)
      {
@@ -582,6 +604,8 @@ void KPData_Rebuild()
          // period cashflow attribution
          int di = KP_PeriodBucket(g_days, KP_DayStart(dtime), KP_DateOnly(dtime));
          g_days[di].cashflow += net;
+         if(dtime >= reset_t)
+            g_tot.reset_cash += net;   // denominator of the prop day move
          // curve point
          int n = g_curve_n;
          ArrayResize(g_curve_t,   n+1, 256);
@@ -626,7 +650,10 @@ void KPData_Rebuild()
          g_pos_count++;
         }
       g_pos[pidx].net += net;
-      if(entry == DEAL_ENTRY_IN || entry == DEAL_ENTRY_INOUT)
+      // INOUT is a reversal: it closes the existing exposure and opens
+      // the remainder the other way. Counting its full volume as BOTH an
+      // entry and an exit inflated lots, lots_out and both VWAPs.
+      if(entry == DEAL_ENTRY_IN)
         {
          if(g_pos[pidx].dir == -1)
             g_pos[pidx].dir = (dtype == DEAL_TYPE_BUY ? 0 : 1);
@@ -637,12 +664,34 @@ void KPData_Rebuild()
          if(g_pos[pidx].open_time == 0 || dtime < g_pos[pidx].open_time)
             g_pos[pidx].open_time = dtime;
         }
-      if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY || entry == DEAL_ENTRY_INOUT)
+      if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY)
         {
          if(dtime > g_pos[pidx].close_time)
             g_pos[pidx].close_time = dtime;
          g_pos[pidx].exit_num += HistoryDealGetDouble(tk, DEAL_PRICE) * lots;
          g_pos[pidx].lots_out += lots;
+        }
+      else if(entry == DEAL_ENTRY_INOUT)
+        {
+         // split the reversal: the part that offsets open volume is an
+         // exit, whatever is left opens the new side
+         double still_open = g_pos[pidx].lots - g_pos[pidx].lots_out;
+         double closing    = MathMin(MathMax(0.0, still_open), lots);
+         double opening    = lots - closing;
+         double dprice     = HistoryDealGetDouble(tk, DEAL_PRICE);
+         if(closing > 0)
+           {
+            g_pos[pidx].exit_num += dprice * closing;
+            g_pos[pidx].lots_out += closing;
+            if(dtime > g_pos[pidx].close_time)
+               g_pos[pidx].close_time = dtime;
+           }
+         if(opening > 0)
+           {
+            g_pos[pidx].lots     += opening;
+            g_pos[pidx].vwap_num += dprice * opening;
+            g_pos[pidx].dir = (dtype == DEAL_TYPE_BUY ? 0 : 1);
+           }
         }
 
       // ---- commissions of IN deals go to totals/buckets too ----
@@ -697,12 +746,15 @@ void KPData_Rebuild()
       int si = KP_NameBucket(g_syms, symbol);
       KP_AddDealToRow(g_syms[si], net, lots);
 
-      int mgi = KP_MagicBucket(g_magics, magic);
+      int mgi = KP_MagicBucket(g_magics, g_pos[pidx].magic);
       KP_AddDealToRow(g_magics[mgi], net, lots);
 
       // EA vs manual (per OUT deal)
-      if(magic != 0) { g_tot.ea_trades++;     g_tot.ea_profit += net; }
-      else           { g_tot.manual_trades++; g_tot.manual_profit += net; }
+      // attribute by the magic that OPENED the position: a closing deal
+      // carries whoever closed it (the panel, another EA, the user)
+      long omagic = g_pos[pidx].magic;
+      if(omagic != 0) { g_tot.ea_trades++;     g_tot.ea_profit += net; }
+      else            { g_tot.manual_trades++; g_tot.manual_profit += net; }
 
       // quick period nets
       if(dtime >= today_t) g_tot.today_pl += net;
@@ -723,18 +775,26 @@ void KPData_Rebuild()
       g_curve_n++;
 
       // drawdown on trading-only curve, pct vs actual balance at peak
-      if(trd >= peak_trd)
+      // feed the pre-deal watermark first so the very first losing deal
+      // is measured against the balance it started from (mirrors
+      // KP_RowDD2); otherwise the opening drawdown reported 0.0%
+      for(int f=0; f<2; f++)
         {
-         peak_trd = trd;
-         peak_bal = bal;
-        }
-      else
-        {
-         double dd = peak_trd - trd;
-         if(dd > g_tot.max_dd)
+         double t_v = (f == 0 ? trd - net : trd);
+         double b_v = (f == 0 ? bal - net : bal);
+         if(t_v >= peak_trd)
            {
-            g_tot.max_dd = dd;
-            g_tot.max_dd_pct = (peak_bal > 0 ? dd / peak_bal * 100.0 : 0.0);
+            peak_trd = t_v;
+            peak_bal = b_v;
+           }
+         else
+           {
+            double dd = peak_trd - t_v;
+            if(dd > g_tot.max_dd)
+              {
+               g_tot.max_dd = dd;
+               g_tot.max_dd_pct = (peak_bal > 0 ? dd / peak_bal * 100.0 : 0.0);
+              }
            }
         }
      }
@@ -873,9 +933,17 @@ void KPData_ComputeExcursions()
       double entry = g_pos[i].vwap_num / g_pos[i].lots;
       ResetLastError();
       int got = CopyRates(g_pos[i].symbol, PERIOD_M1,
-                          g_pos[i].open_time, g_pos[i].close_time + 60, rates);
+                          g_pos[i].open_time, g_pos[i].close_time, rates);
       if(got <= 0)
-         continue;   // M1 history not ready yet; retried on next rebuild
+        {
+         // history that never arrives (delisted symbol, broker cut-off)
+         // would otherwise be re-requested on every rebuild forever
+         if(KP_StoreGet("nx_" + (string)g_pos[i].pos_id, 0) > 2.5)
+            continue;
+         KP_StoreSet("nx_" + (string)g_pos[i].pos_id,
+                     KP_StoreGet("nx_" + (string)g_pos[i].pos_id, 0) + 1);
+         continue;
+        }
       bars_budget -= got;
 
       double hi = rates[0].high, lo = rates[0].low;
@@ -889,6 +957,15 @@ void KPData_ComputeExcursions()
       if(fe_p < 0) fe_p = 0;
       if(ae_p < 0) ae_p = 0;
 
+      // the cache must not outgrow the window it reports on, otherwise
+      // the MFE/MAE page aggregates every trade seen since attach while
+      // still labelling the sample "n / 200"
+      if(g_exc_n >= KP_EXC_SCOPE)
+        {
+         for(int s=0; s<g_exc_n-1; s++)
+            g_exc[s] = g_exc[s+1];
+         g_exc_n--;
+        }
       int n = g_exc_n;
       ArrayResize(g_exc, n+1, 64);
       g_exc[n].pos_id = g_pos[i].pos_id;

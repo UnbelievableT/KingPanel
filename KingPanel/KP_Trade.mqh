@@ -18,6 +18,14 @@ CTrade g_trade;
 #define KP_CLOSE_BUY     3
 #define KP_CLOSE_SELL    4
 
+// slippage allowance: a flat 30 points rejects exactly the flattens the
+// guards need on wide-spread symbols (indices, crypto, news spikes)
+int KPT_Dev(const string sym)
+  {
+   long sp = SymbolInfoInteger(sym, SYMBOL_SPREAD);
+   return (int)MathMax(30, MathMin(500, sp * 3));
+  }
+
 // close positions by filter; returns number of close orders sent
 int KPT_CloseBy(const int mode)
   {
@@ -41,7 +49,10 @@ int KPT_CloseBy(const int mode)
         }
       if(!doit)
          continue;
-      g_trade.SetDeviationInPoints(30);
+      // keep the position's own magic on the closing deal, otherwise the
+      // panel would re-stamp other EAs' trades and corrupt per-magic stats
+      g_trade.SetExpertMagicNumber(PositionGetInteger(POSITION_MAGIC));
+      g_trade.SetDeviationInPoints(KPT_Dev(PositionGetString(POSITION_SYMBOL)));
       if(g_trade.PositionClose(tk))
          sent++;
       else
@@ -53,7 +64,11 @@ int KPT_CloseBy(const int mode)
 
 int KPT_CloseTicket(const ulong ticket)
   {
-   g_trade.SetDeviationInPoints(30);
+   if(PositionSelectByTicket(ticket))
+     {
+      g_trade.SetExpertMagicNumber(PositionGetInteger(POSITION_MAGIC));
+      g_trade.SetDeviationInPoints(KPT_Dev(PositionGetString(POSITION_SYMBOL)));
+     }
    if(g_trade.PositionClose(ticket))
       return 1;
    PrintFormat("[KING PANEL] close #%I64u failed: %d %s",
@@ -61,13 +76,34 @@ int KPT_CloseTicket(const ulong ticket)
    return 0;
   }
 
-int KPT_DeletePendings()
+// mine_only: automation side effects must never cancel another EA's
+// working orders - only an explicit user click may do that
+int KPT_DeletePendings(const bool mine_only=false)
   {
    int sent = 0;
    for(int i=OrdersTotal()-1; i>=0; i--)
      {
       ulong tk = OrderGetTicket(i);
       if(tk == 0)
+         continue;
+      if(mine_only && OrderGetInteger(ORDER_MAGIC) != KPT_PanelMagic)
+         continue;
+      if(g_trade.OrderDelete(tk))
+         sent++;
+     }
+   return sent;
+  }
+
+// delete pending orders whose symbol is exposed to a currency
+int KPT_DeletePendingsCur(const string cur)
+  {
+   int sent = 0;
+   for(int i=OrdersTotal()-1; i>=0; i--)
+     {
+      ulong tk = OrderGetTicket(i);
+      if(tk == 0)
+         continue;
+      if(!KPN_SymTouches(OrderGetString(ORDER_SYMBOL), cur))
          continue;
       if(g_trade.OrderDelete(tk))
          sent++;
@@ -168,10 +204,38 @@ string KPT_LockLeft()
    return KP_Duration((long)(g_prop.lock_until - TimeCurrent()));
   }
 
-// day P&L = realized since reset anchor + current floating
+//--- prop-day equity anchor -----------------------------------------
+// Prop firms measure the day as equity_now - equity_at_reset. Using
+// realized+floating instead double-counts floating P&L that was already
+// open when the day started. We snapshot equity at the rollover; when no
+// valid snapshot exists (EA attached mid-day) we fall back to the
+// realized+floating estimate, which is what balance-at-anchor implies.
+double   g_prop_eq_val  = 0;
+datetime g_prop_eq_time = 0;
+
+void KPT_PropAnchorLoad()
+  {
+   g_prop_eq_time = (datetime)(long)KP_StoreGet("prop_eq_t", 0);
+   g_prop_eq_val  = KP_StoreGet("prop_eq_v", 0);
+  }
+
+// call every timer tick, after the account snapshot is refreshed
+void KPT_PropAnchorTick()
+  {
+   datetime a = KP_ResetAnchor(TimeCurrent());
+   if(g_prop_eq_time == a)
+      return;
+   g_prop_eq_time = a;
+   g_prop_eq_val  = g_acc.equity;
+   KP_StoreSet("prop_eq_t", (double)(long)a);
+   KP_StoreSet("prop_eq_v", g_prop_eq_val);
+  }
+
 double KPT_DayPL()
   {
-   return g_tot.reset_pl + g_acc.floating_pl;
+   if(g_prop_eq_time == KP_ResetAnchor(TimeCurrent()) && g_prop_eq_val > 0)
+      return g_acc.equity - g_prop_eq_val - g_tot.reset_cash;
+   return g_tot.reset_pl + g_acc.floating_pl;   // no snapshot yet
   }
 
 // remaining loss budget for the day (never negative)
@@ -246,10 +310,57 @@ double KPT_RiskLots(const string sym, const int dir, const double risk_money,
    double per_lot = KPT_MoneyPerLot(sym, dir, sl_pts);
    if(per_lot <= 0.0 || risk_money <= 0.0)
       return 0.0;
-   double v = KPT_NormLotsFloor(sym, risk_money / per_lot);
+   double want = risk_money / per_lot;
+   double vmax = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
+   if(vmax > 0 && want > vmax)
+      return 0.0;    // clamping here would silently take LESS risk than asked
+   double v = KPT_NormLotsFloor(sym, want);
    if(v > 0)
       realized_risk = v * per_lot;
    return v;
+  }
+
+// smallest SL/TP distance the broker will accept right now
+int KPT_MinStop(const string sym)
+  {
+   return (int)(SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL)
+              + SymbolInfoInteger(sym, SYMBOL_SPREAD) + 2);
+  }
+
+// SL/TP closer than the broker's stop distance is rejected outright: the
+// risk-% lot size was computed FROM sl_pts, so silently widening it would
+// break the risk contract the user set.
+bool KPT_StopsOK(const string sym, const int sl_pts, const int tp_pts)
+  {
+   int ms = KPT_MinStop(sym);
+   if(sl_pts > 0 && sl_pts < ms)
+     {
+      KPT_RiskMsg(StringFormat(LL("SL %d pt too close (min %d incl. spread)",
+                                  "止损 %d 点过近 (含点差最小 %d)"), sl_pts, ms));
+      return false;
+     }
+   if(tp_pts > 0 && tp_pts < ms)
+     {
+      KPT_RiskMsg(StringFormat(LL("TP %d pt too close (min %d incl. spread)",
+                                  "止盈 %d 点过近 (含点差最小 %d)"), tp_pts, ms));
+      return false;
+     }
+   return true;
+  }
+
+// free-margin check before sending
+bool KPT_MarginOK(const string sym, const int dir, const double v, const double px)
+  {
+   double need = 0;
+   if(!OrderCalcMargin(dir == 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+                       sym, v, px, need))
+      return true;                       // cannot tell: let the server decide
+   if(need <= AccountInfoDouble(ACCOUNT_MARGIN_FREE))
+      return true;
+   KPT_RiskMsg(StringFormat(LL("Not enough free margin: needs %s, free %s",
+                               "可用保证金不足: 需要 %s, 可用 %s"),
+               KP_Money(need, 0), KP_Money(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 0)));
+   return false;
   }
 
 // dir: 0 buy, 1 sell; sl/tp in points (0 = none)
@@ -263,6 +374,14 @@ bool KPT_Market(const string sym, const int dir, const double lots,
      }
    if(g_ng_block_on)
      {
+      if(!g_news_ok)
+        {
+         // armed but blind: refusing is the only safe reading of "block
+         // me around news" when the calendar cannot be consulted
+         KPT_RiskMsg(LL("NEWS BLOCK: calendar unavailable (guard is armed)",
+                        "新闻拦截: 日历不可用 (护盾已武装)"));
+         return false;
+        }
       string ev_name = "", ev_cur = "";
       long ev_in = 0;
       if(KPN_ActiveEvent(sym, ev_name, ev_cur, ev_in))
@@ -290,14 +409,16 @@ bool KPT_Market(const string sym, const int dir, const double lots,
    if(tp_pts > 0)
       tp = NormalizeDouble(dir == 0 ? px + tp_pts*pt : px - tp_pts*pt, dg);
    double v = KPT_NormLots(sym, lots);
+   if(!KPT_StopsOK(sym, sl_pts, tp_pts) || !KPT_MarginOK(sym, dir, v, px))
+      return false;
    g_trade.SetExpertMagicNumber(KPT_PanelMagic);
-   g_trade.SetDeviationInPoints(30);
+   g_trade.SetDeviationInPoints(KPT_Dev(sym));
    bool ok = (dir == 0 ? g_trade.Buy(v, sym, 0, sl, tp, "KING PANEL")
                        : g_trade.Sell(v, sym, 0, sl, tp, "KING PANEL"));
    if(ok)
-      KPT_RiskMsg(StringFormat("%s %s %s @%s",
-                  (dir == 0 ? "BUY" : "SELL"), KP_Lots(v), sym,
-                  DoubleToString(px, dg)));
+      KPT_RiskMsg(StringFormat(LL("%s %s %s @%s", "%s %s %s @%s"),
+                  (dir == 0 ? LL("BUY", "买入") : LL("SELL", "卖出")),
+                  KP_Lots(v, KP_LotDigits(sym)), sym, DoubleToString(px, dg)));
    else
       KPT_RiskMsg(StringFormat("%s FAIL %d %s",
                   (dir == 0 ? "BUY" : "SELL"),
@@ -316,6 +437,14 @@ bool KPT_Pending(const string sym, const int ptype, const double lots,
      }
    if(g_ng_block_on)
      {
+      if(!g_news_ok)
+        {
+         // armed but blind: refusing is the only safe reading of "block
+         // me around news" when the calendar cannot be consulted
+         KPT_RiskMsg(LL("NEWS BLOCK: calendar unavailable (guard is armed)",
+                        "新闻拦截: 日历不可用 (护盾已武装)"));
+         return false;
+        }
       string ev_name = "", ev_cur = "";
       long ev_in = 0;
       if(KPN_ActiveEvent(sym, ev_name, ev_cur, ev_in))
@@ -355,6 +484,8 @@ bool KPT_Pending(const string sym, const int ptype, const double lots,
    if(tp_pts > 0)
       tp = NormalizeDouble(is_buy ? px + tp_pts*pt : px - tp_pts*pt, dg);
    double v = KPT_NormLots(sym, lots);
+   if(!KPT_StopsOK(sym, sl_pts, tp_pts) || !KPT_MarginOK(sym, is_buy ? 0 : 1, v, px))
+      return false;
    g_trade.SetExpertMagicNumber(KPT_PanelMagic);
    bool ok = false;
    switch(ptype)
@@ -368,8 +499,8 @@ bool KPT_Pending(const string sym, const int ptype, const double lots,
                               ptype == 1 ? ORDER_TYPE_SELL_LIMIT :
                               ptype == 2 ? ORDER_TYPE_BUY_STOP : ORDER_TYPE_SELL_STOP);
    if(ok)
-      KPT_RiskMsg(StringFormat("%s %s %s @%s", tag, KP_Lots(v), sym,
-                  DoubleToString(px, dg)));
+      KPT_RiskMsg(StringFormat("%s %s %s @%s", tag,
+                  KP_Lots(v, KP_LotDigits(sym)), sym, DoubleToString(px, dg)));
    else
       KPT_RiskMsg(StringFormat("%s FAIL %d %s", tag,
                   g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription()));
@@ -427,7 +558,8 @@ bool KPT_BE(const ulong ticket, const int buf_pts)
       return true;
    if(g_trade.PositionModify(ticket, ns, tp))
      {
-      KPT_RiskMsg(StringFormat("BE #%I64u @%s", ticket, DoubleToString(ns, dg)));
+      KPT_RiskMsg(StringFormat(LL("BE #%I64u @%s", "保本 #%I64u @%s"),
+                  ticket, DoubleToString(ns, dg)));
       return true;
      }
    KPT_RiskMsg(StringFormat(LL("BE FAIL %d", "保本失败 %d"), g_trade.ResultRetcode()));
@@ -458,6 +590,32 @@ bool KPT_Half(const ulong ticket)
    return false;
   }
 
+//--- trailing failure backoff (ring, in-memory) ---------------------
+ulong    g_tf_ticket[16];
+datetime g_tf_until[16];
+int      g_tf_n = 0;
+
+bool KPT_TrailBlocked(const ulong ticket)
+  {
+   for(int i=0; i<g_tf_n; i++)
+      if(g_tf_ticket[i] == ticket)
+         return (TimeCurrent() < g_tf_until[i]);
+   return false;
+  }
+
+void KPT_TrailFail(const ulong ticket)
+  {
+   for(int i=0; i<g_tf_n; i++)
+      if(g_tf_ticket[i] == ticket)
+        {
+         g_tf_until[i] = TimeCurrent() + 30;
+         return;
+        }
+   int slot = (g_tf_n < 16 ? g_tf_n++ : 0);
+   g_tf_ticket[slot] = ticket;
+   g_tf_until[slot]  = TimeCurrent() + 30;
+  }
+
 // maintain armed trailing stops; called every timer tick.
 // Trails only on the profitable side of the entry (never installs a
 // losing SL the trader didn't ask for) and only ever tightens.
@@ -486,7 +644,17 @@ void KPT_TrailTick()
          continue;   // no improvement
       if(buy  && cand > tk.bid - (stops+1)*pt) continue;
       if(!buy && cand < tk.ask + (stops+1)*pt) continue;
-      g_trade.PositionModify(g_live[i].ticket, cand, g_live[i].tp);
+      if(KPT_TrailBlocked(g_live[i].ticket))
+         continue;
+      g_trade.SetExpertMagicNumber(g_live[i].magic);
+      if(!g_trade.PositionModify(g_live[i].ticket, cand, g_live[i].tp))
+        {
+         // a rejected modify repeated every second floods the journal and
+         // the server; back the ticket off for 30 s and report it once
+         KPT_TrailFail(g_live[i].ticket);
+         KPT_RiskMsg(StringFormat(LL("Trail #%I64u failed %d", "追踪 #%I64u 失败 %d"),
+                     g_live[i].ticket, g_trade.ResultRetcode()));
+        }
      }
   }
 
@@ -498,7 +666,7 @@ void KPT_NewsGuardTick()
    datetime now = TimeCurrent();
    for(int i=0; i<g_news_count; i++)
      {
-      if(g_news[i].importance < g_news_stars)
+      if(g_news[i].importance < g_ng_stars)
          continue;
       if(!KPN_CurOK(g_news[i].cur))
          continue;
@@ -515,21 +683,23 @@ void KPT_NewsGuardTick()
             m++;
             n += KPT_CloseTicket(g_live[p].ticket);
            }
-      if(n > 0)
+      // a pending left armed would fill straight into the event
+      int np = KPT_DeletePendingsCur(g_news[i].cur);
+      if(n > 0 || np > 0)
         {
          // one-shot only once every touching position is gone;
          // partial failures retry on the next tick inside the window
          if(n == m)
             KP_StoreSet("ngf_" + (string)g_news[i].vid, 1);
-         string m;
+         string msg;
          if(KP_Lang == 0)
-            m = StringFormat("NEWS FLAT: closed %d before %s %s (in %s)",
-                n, g_news[i].cur, g_news[i].name, KP_Duration(dt));
+            msg = StringFormat("NEWS FLAT: closed %d, cancelled %d before %s %s (in %s)",
+                  n, np, g_news[i].cur, g_news[i].name, KP_Duration(dt));
          else
-            m = StringFormat("新闻避险: %s %s 前平 %d 单 (还有 %s)",
-                g_news[i].cur, g_news[i].name, n, KP_Duration(dt));
-         KPT_RiskMsg(m);
-         if(KP_PushRisk) KP_Push(m);
+            msg = StringFormat("新闻避险: %s %s 前平 %d 单, 撤 %d 挂单 (还有 %s)",
+                  g_news[i].cur, g_news[i].name, n, np, KP_Duration(dt));
+         KPT_RiskMsg(msg);
+         if(KP_PushRisk) KP_Push(msg);
         }
      }
   }
@@ -543,8 +713,14 @@ bool KPT_RiskCheck()
    if(g_risk.sl_on && g_acc.positions > 0 && fpl <= -MathAbs(g_risk.sl_val))
      {
       int n = KPT_CloseBy(KP_CLOSE_ALL);
-      g_risk.sl_on = false;   // one-shot
-      KPT_RiskSave();
+      // disarm ONLY once the book is actually flat - a rejected close
+      // (requote / no quotes / autotrading off) must leave the guard
+      // armed so the next tick retries instead of silently giving up
+      if(PositionsTotal() == 0)
+        {
+         g_risk.sl_on = false;
+         KPT_RiskSave();
+        }
       string m1 = StringFormat(LL("Loss guard %.2f <= -%.2f, closed %d",
                                   "浮亏触发 %.2f ≤ -%.2f, 全平 %d 单"),
                   fpl, MathAbs(g_risk.sl_val), n);
@@ -556,8 +732,11 @@ bool KPT_RiskCheck()
    if(g_risk.tp_on && g_acc.positions > 0 && fpl >= MathAbs(g_risk.tp_val))
      {
       int n = KPT_CloseBy(KP_CLOSE_ALL);
-      g_risk.tp_on = false;   // one-shot
-      KPT_RiskSave();
+      if(PositionsTotal() == 0)
+        {
+         g_risk.tp_on = false;
+         KPT_RiskSave();
+        }
       string m2 = StringFormat(LL("Profit guard %.2f >= %.2f, closed %d",
                                   "浮盈触发 %.2f ≥ %.2f, 全平 %d 单"),
                   fpl, MathAbs(g_risk.tp_val), n);
@@ -570,8 +749,11 @@ bool KPT_RiskCheck()
       g_acc.equity <= g_risk.floor_val && g_acc.positions > 0)
      {
       int n = KPT_CloseBy(KP_CLOSE_ALL);
-      g_risk.floor_on = false;   // one-shot
-      KPT_RiskSave();
+      if(PositionsTotal() == 0)
+        {
+         g_risk.floor_on = false;
+         KPT_RiskSave();
+        }
       string m3 = StringFormat(LL("Equity floor %.2f <= %.2f, closed %d",
                                   "净值保护 %.2f ≤ %.2f, 全平 %d 单"),
                   g_acc.equity, g_risk.floor_val, n);
@@ -637,8 +819,6 @@ bool KPT_RiskCheck()
       datetime mark = day + g_risk.time_hh * 3600 + g_risk.time_mm * 60;
       if(now >= mark && g_risk_last_timeclose < day)
         {
-         g_risk_last_timeclose = day;
-         KPT_RiskSave();
          if(g_acc.positions > 0)
            {
             int n = KPT_CloseBy(KP_CLOSE_ALL);
@@ -648,6 +828,13 @@ bool KPT_RiskCheck()
             KPT_RiskMsg(m4);
             if(KP_PushRisk) KP_Push(m4);
             fired = true;
+           }
+         // the day counts as handled only when nothing is left open,
+         // otherwise the next tick retries the flatten
+         if(PositionsTotal() == 0)
+           {
+            g_risk_last_timeclose = day;
+            KPT_RiskSave();
            }
         }
      }

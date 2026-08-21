@@ -58,7 +58,10 @@ KingPanel/
 - **Collapse**: `−`/`+` button at the right of the title bar; collapsed = title bar only.
 - **Adaptive height**: the panel fills the chart window from its top edge down and follows window resizes in real time; list row counts grow/shrink with the height, the overview curve and Chart Center plots stretch.
 - **Wheel**: hover the panel and scroll lists; the scrollbar thumb is page-proportional and **clicking anywhere on the track jumps straight there**; ▲▼ step.
+- **Order safety**: SL/TP closer than the broker's stop level + current spread is **refused** with a message rather than silently widened (the risk-% lot size was computed from that SL); orders are also refused when free margin is insufficient or when the risk target would exceed the symbol's maximum lot. Sending buttons carry a 600 ms debounce so a reflex double-click cannot send two full-size orders.
+- **One instance trades**: with two panels on the same account only one claims ownership and runs the guards, automation and fleet publishing; the other is a live mirror. Ownership transfers automatically if the owner disappears.
 - **One-click trading**: every trading button (orders, closes, deletions) executes on a single click — a confirmation step only costs slippage. Results (fill price or retcode) show instantly in the footer. Requires Algo Trading enabled.
+- **Text rendering**: the canvas uses an opaque color format because GDI does not preserve the alpha channel when drawing text — with an alpha-aware format every antialiased glyph edge composites against the chart behind the panel and the font looks washed out. Layout and text scale together via `InpScale`; `InpFontScale` adjusts text alone and auto-boosts on low-DPI screens.
 - **Status**: green dot in the header = algo trading allowed; footer shows SYD/TYO/LON/NYC session dots (approx. GMT, no DST), current symbol spread and the server clock; risk-guard triggers flash in yellow for 2 minutes.
 
 ## Statistics methodology
@@ -70,9 +73,12 @@ KingPanel/
 - **Max drawdown**: peak-to-trough on the trading-only cumulative curve (cash flow cannot fake a drawdown); percentage = drawdown ÷ actual balance at the peak — deposits landing mid-drawdown do **not** dilute the denominator.
 - **Per-period max drawdown (Analysis)**: peak-to-trough of the realized trading equity within the period, including the first deal's drop against the period's opening watermark.
 - **Profit factor** = gross profit ÷ |gross loss|; **expectancy** = net ÷ closed trades; **recovery factor** = net ÷ max DD; **growth** = net ÷ total deposits.
-- **Algo vs manual**: split by whether the closing deal's magic number is 0.
+- **Algo vs manual / per-magic**: attributed by the magic that **opened** the position, not the one on the closing deal — otherwise closing another EA's trade from the panel would re-label it.
+- **Analysis TOTAL row** sums exactly the rows displayed above it (per closing deal). The per-**position** figures live on OVERVIEW, labelled CLOSED TRADES; with partial closes the two counts legitimately differ.
+- **Floating P&L** excludes `ACCOUNT_CREDIT`, so bonus/credit accounts do not show a phantom floating profit (and the floating guards are not biased by it).
+- **Prop day P&L** is `equity now − equity at the reset` (the prop-firm definition), snapshotted at each rollover; when no snapshot exists yet (EA attached mid-day) it falls back to realized-since-reset + floating.
 - **Equity curve (history)**: actual balance after every closing deal and cash-flow operation; **live curve** = equity sampled every second over the last 30 minutes.
-- **MFE / MAE**: the last 200 closed positions are replayed on M1 bars (incrementally, 40 per rebuild); MFE = max favorable price excursion, MAE = max adverse excursion, both converted to account currency via tick value × lots (historical FX rates approximated). **E-Ratio** = avg MFE ÷ avg MAE; **capture rate** = total net ÷ total MFE. Positions whose symbol left Market Watch or whose M1 history isn't loaded are skipped; the sample count is shown in the chart.
+- **MFE / MAE**: the last 200 closed positions are replayed on M1 bars (incrementally, 40 per rebuild); MFE = max favorable price excursion, MAE = max adverse excursion, both converted to account currency via tick value × lots (historical FX rates approximated). **E-Ratio** = avg MFE ÷ avg MAE; **capture rate** = total net ÷ total MFE. Positions whose symbol left Market Watch or whose M1 history isn't loaded are skipped (retried a bounded number of times); the sample count is shown in the chart. Excursions are converted with the symbol's **current** tick value, so for historical trades on cross-currency symbols the money figures are an approximation — the shape and the ratios are exact, the absolute currency amounts are not.
 
 ## Inputs
 
@@ -80,7 +86,8 @@ KingPanel/
 |---|---|---|---|
 | Panel | InpX / InpY | 10 / 30 | First-load position (drag position is remembered afterwards) |
 | Panel | InpWidth | 600 | Panel width in px (520–900; widen for cent accounts) |
-| Panel | InpScale | 1.0 | Extra scale multiplier (DPI is already auto-detected) |
+| Panel | InpScale | 1.0 | Scale multiplier for the whole panel — layout **and** text |
+| Panel | InpFontScale | 0 (auto) | Text-only multiplier. Auto boosts text on low-DPI screens; set 1.2–1.4 if the font still looks small on a 1080p monitor |
 | Panel | InpLangCN | false | Chinese UI by default (toggle in-panel any time; remembered) |
 | Panel | InpChartTheme | true | Gold chart theme (recolors candles/background, hides grid & volumes; restored on removal) |
 | Fonts | InpFontMono / InpFontCJK | Consolas / Microsoft YaHei | Numeric (monospace) / CJK font |
