@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_UI.mqh - KING PANEL V1.1                                      |
+//| KP_UI.mqh - KING PANEL V1.5                                      |
 //| Layout core: header / tabs / footer / overview / chart modal     |
 //+------------------------------------------------------------------+
 #ifndef KP_UI_MQH
@@ -232,7 +232,7 @@ void KPU_DrawHeader(const int W)
    KPC_Text(lx + KP_S(7), KP_S(6), "K", KP_BG, KP_FontMono, 8.6, 1, true);
    KPC_Text(lx + KP_S(20), KP_S(4), "KING PANEL", KP_TXT, KP_FontMono, 8.6, 0, true);
    int tw = KPC_TextW("KING PANEL", KP_FontMono, 8.6, true);
-   KPC_Text(lx + KP_S(26) + tw, KP_S(7), "V1.4", KP_AMBER, KP_FontMono, 6.6, 0, true);
+   KPC_Text(lx + KP_S(26) + tw, KP_S(7), "V1.5", KP_AMBER, KP_FontMono, 6.6, 0, true);
 
    // collapse button
    int bx = W - KP_S(24), bw = KP_S(17);

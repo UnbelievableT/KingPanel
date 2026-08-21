@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_Trade.mqh - KING PANEL V1.0                                   |
+//| KP_Trade.mqh - KING PANEL V1.5                                   |
 //| Close operations + risk-guard automation                         |
 //+------------------------------------------------------------------+
 #ifndef KP_TRADE_MQH
@@ -237,7 +237,14 @@ void KPT_PropAnchorTick()
    // Snapshotting live equity is only valid if we were actually running
    // AT the rollover. On a mid-day attach it would declare "the day
    // starts now", hiding a loss already taken and disarming the guard.
-   bool observed = (g_prop_eq_time == a - 86400) || (TimeCurrent() - a <= 120);
+   // g_prop_eq_time is RESTORED from the store on attach, so "yesterday's
+   // anchor is present" only proves the panel ran at some point yesterday,
+   // not that it watched the rollover. A terminal that is shut overnight
+   // and restarted at 09:00 would pass that test and re-anchor to an
+   // equity that already absorbed an overnight stop-out. The real
+   // invariant is: this instance was attached before the anchor.
+   bool observed = (g_ea_start > 0 && g_ea_start <= a) ||
+                   (TimeCurrent() - a <= 120);
    if(!observed)
      {
       // reconstruct the day-open equity from the realized window we do
@@ -717,11 +724,22 @@ void KPT_NewsGuardTick()
            }
       // a pending left armed would fill straight into the event
       int np = KPT_DeletePendingsCur(g_news[i].cur);
+      // a delete can be REJECTED (busy context, off quotes); np only counts
+      // the ones that went through, so re-scan before latching the one-shot
+      int left = 0;
+      for(int oi=OrdersTotal()-1; oi>=0; oi--)
+        {
+         ulong otk = OrderGetTicket(oi);
+         if(otk == 0)
+            continue;
+         if(KPN_SymTouches(OrderGetString(ORDER_SYMBOL), g_news[i].cur))
+            left++;
+        }
       if(n > 0 || np > 0)
         {
          // one-shot only once every touching position is gone;
          // partial failures retry on the next tick inside the window
-         if(n == m)
+         if(n == m && left == 0)
             KP_StoreSet("ngf_" + (string)g_news[i].vid, 1);
          string msg;
          if(KP_Lang == 0)

@@ -1,12 +1,22 @@
-# KING PANEL V1.4
+# KING PANEL V1.5
 
 **English** | [简体中文](README.zh-CN.md)
 
 ![Overview](docs/overview.png)
+*Overview — equity curve, 20 headline statistics, algo vs manual split.*
+
 ![Analysis](docs/analysis.png)
+*Analysis — per-period table with max drawdown and DD%, sortable, D/W/M/Y.*
+
 ![News](docs/news.png)
+*News — economic calendar with star filter, currency chips, guard controls and chart marks.*
+
+![Chart Center](docs/charts.png)
+*Chart Center — MFE/MAE per trade with E-ratio and range efficiency (one of six composed pages).*
 
 A Bloomberg-terminal style account dashboard EA for MetaTrader 5. Pure `CCanvas` bitmap rendering — near-black terminal background, amber accent, square corners, 1px separators, monospace numerics — in a compact, high-density layout. DPI-aware (auto-scales on 4K / scaled displays), draggable, collapsible, and the panel height fills the chart window.
+
+**V1.5 highlights**: two adversarial audit rounds — **99 verified fixes** (71 findings from a six-lens code audit, then 28 regressions the fixes themselves introduced, caught by an independent verification pass): order safety (stop-level and margin pre-validation, risk guards that stay armed and retry when a close is rejected instead of silently disarming, single announcement per event), statistics (credit excluded from floating P&L, reversal deals split into closing/opening legs with a restarted entry basis, excursion cache pruned by window), **atomic single-instance ownership** (compare-and-set claim, demotion, mirror badge), crisp text on any screen (XRGB canvas + DPI-aware **InpFontScale**, CJK-aware value font). MFE/MAE sampling no longer starves: the old persisted blacklist condemned every position within seconds of attach (three retries burned by the 1 s timer while the history was still downloading, then cached for four weeks). It is now an in-memory 30 s backoff, and when M1 is genuinely unavailable — the terminal caps stored bars, or the broker will not serve it that far back — the sample degrades to M5/M15/M30/H1 and the page states which resolution it used instead of showing an empty panel forever. The session heatmap page is now self-explaining: titled axes (weekday × close hour), a legend line for cell color/number/day total/session stripes, and named market-session bands.
 
 **V1.4 highlights**: **per-position automation** — break-even / panel-maintained trailing stop / half-close per row plus BE-ALL, TR-ALL and a trailing-distance stepper (trails only on the profitable side, never loosens, broker stop-level aware); **news guard** — entry blocking around filtered events for currency-related symbols and one-shot **auto-flat** of exposed positions before events; **Chart Center 2.0** — every page is now a composed layout with height-capped plots (no more stretched charts): equity + underwater + rolling 20-trade PF, daily bars + hold-time analysis (disposition-effect detector), monthly bars + R-multiple distribution, drawdown + streaks + three worst episodes, MFE/MAE + range-efficiency block, session heatmap + hourly-net bars; **one-click EXPORT** (positions/daily CSV + dark HTML statement with inline-SVG equity + full-chart PNG); **Telegram delivery** (event stream + daily digest via your own bot, optional); **multi-account fleet view** (all panels on the machine aggregate via the common folder); **magic aliases** ("12345=KING S1"); incremental fast-path history scan (no more 20-second full rescans on 10k+ deal accounts).
 

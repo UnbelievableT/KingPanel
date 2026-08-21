@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_Export.mqh - KING PANEL V1.4                                  |
+//| KP_Export.mqh - KING PANEL V1.5                                  |
 //| One-click report: positions/periods CSV + dark HTML statement    |
 //| with inline-SVG equity curve + full-chart PNG screenshot.        |
 //| Everything lands in MQL5\Files\KingPanel\ (sandbox, Market-safe).|

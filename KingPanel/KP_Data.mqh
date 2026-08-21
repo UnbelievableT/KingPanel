@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_Data.mqh - KING PANEL V1.0                                    |
+//| KP_Data.mqh - KING PANEL V1.5                                    |
 //| Statistics engine: history scan, aggregation, curves             |
 //+------------------------------------------------------------------+
 #ifndef KP_DATA_MQH
@@ -913,6 +913,7 @@ struct KPExc
    double            hi;         // window high
    double            lo;         // window low
    datetime          ctime;      // close time (window pruning key)
+   int               tf_sec;     // bar period actually used (honesty)
   };
 
 KPExc g_exc[];
@@ -941,6 +942,40 @@ int KPExc_TryIdx(const long pid)
    return -1;
   }
 
+// M1 is the ideal resolution for an excursion, but it is routinely
+// unavailable: the terminal caps stored bars ("Max bars in chart") and
+// brokers do not serve M1 far back. Showing an empty page forever is the
+// worst answer - degrade to coarser bars instead, but only while the bar
+// period stays small against the hold time, otherwise a single bar spills
+// far outside the trade and its high/low describes someone else's move.
+int KPExc_Fetch(const string sym, const datetime open_t, const datetime close_t,
+                MqlRates &out[], int &used_sec)
+  {
+   ENUM_TIMEFRAMES tf[5] = {PERIOD_M1, PERIOD_M5, PERIOD_M15, PERIOD_M30, PERIOD_H1};
+   long hold = (long)(close_t - open_t);
+   for(int t=0; t<5; t++)
+     {
+      int ps = PeriodSeconds(tf[t]);
+      if(t > 0 && hold < 3*ps)
+         break;                        // too coarse to describe this trade
+      ResetLastError();
+      int got = CopyRates(sym, tf[t], open_t, close_t, out);
+      if(got <= 0 && hold < ps)
+        {
+         // a trade that lives inside one bar: that bar is the only source
+         // (its range does include pre-entry ticks - unavoidable)
+         datetime from = open_t - (datetime)(open_t % ps);
+         got = CopyRates(sym, tf[t], from, close_t, out);
+        }
+      if(got > 0)
+        {
+         used_sec = ps;
+         return got;
+        }
+     }
+   return 0;
+  }
+
 bool KPExc_Have(const long pid)
   {
    for(int i=0; i<g_exc_n; i++)
@@ -955,10 +990,19 @@ void KPData_ComputeExcursions()
    long bars_budget = 200000;
    MqlRates rates[];
 
-   for(int i=g_pos_count-1; i>=0; i--)
+   // Walk in CLOSE order, the same ordering the prune below uses. Walking
+   // g_pos (OPEN order) scanned a different set than the prune kept: a
+   // scalp opened last but closed early was fetched, appended, then pruned
+   // again on every single rebuild (permanent CopyRates churn), while a
+   // long-held swing that closed today was never reached at all - so the
+   // MFE/MAE page silently excluded every long-held trade.
+   bool by_close = (g_close_n > 0);
+   int  scan_n   = (by_close ? g_close_n : g_pos_count);
+   for(int k=scan_n-1; k>=0; k--)
      {
       if(considered >= KP_EXC_SCOPE || added >= KP_EXC_BATCH || bars_budget <= 0)
          break;
+      int i = (by_close ? g_close_order[k] : k);
       if(!g_pos[i].closed)
          continue;
       considered++;
@@ -979,13 +1023,9 @@ void KPData_ComputeExcursions()
          continue;
 
       double entry = g_pos[i].vwap_num / g_pos[i].lots;
-      // floor to the bar boundary: a trade opened and closed inside one
-      // minute has no bar whose OPEN time falls in [open, close], and a
-      // range CopyRates would return 0 forever
-      datetime from = g_pos[i].open_time - (g_pos[i].open_time % 60);
-      ResetLastError();
-      int got = CopyRates(g_pos[i].symbol, PERIOD_M1,
-                          from, g_pos[i].close_time, rates);
+      int used_sec = 60;
+      int got = KPExc_Fetch(g_pos[i].symbol, g_pos[i].open_time,
+                            g_pos[i].close_time, rates, used_sec);
       if(got <= 0)
         {
          if(ti < 0)
@@ -1026,6 +1066,7 @@ void KPData_ComputeExcursions()
       g_exc[n].hi     = hi;
       g_exc[n].lo     = lo;
       g_exc[n].ctime  = g_pos[i].close_time;
+      g_exc[n].tf_sec = used_sec;
       g_exc_n++;
       added++;
      }

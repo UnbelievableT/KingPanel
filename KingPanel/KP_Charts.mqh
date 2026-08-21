@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_Charts.mqh - KING PANEL V1.3                                  |
+//| KP_Charts.mqh - KING PANEL V1.5                                  |
 //| Chart Center: six composed pages. Every plot is height-capped    |
 //| and the freed space carries companion analytics — nothing is     |
 //| ever stretched to the full window height.                        |
@@ -507,10 +507,20 @@ void KPCH_PageMFE(const int px, int y, const int cw, const int H)
   {
    if(g_exc_n < 1)
      {
-      KPCH_Empty(px, y, cw, H,
-                 g_close_n == 0 ? LL("NO CLOSED TRADES YET", "尚无已平仓交易")
-                                : LL("NO SAMPLE YET (M1 HISTORY LOADING)",
-                                     "暂无样本 (M1 历史加载中)"));
+      if(g_close_n == 0)
+         KPCH_Empty(px, y, cw, H, LL("NO CLOSED TRADES YET", "尚无已平仓交易"));
+      else
+        {
+         // the honest reason: we need bar history covering each trade, and
+         // the terminal may simply not hold it that far back
+         KPCH_Empty(px, y, cw, H,
+                    LL("NO BAR HISTORY COVERING THESE TRADES",
+                       "该区间缺少K线历史"));
+         KPC_Lbl(px + cw/2, y + H/2 + KP_S(10),
+                 LL("Tools > Options > Charts: raise \"Max bars in chart\", then reopen this page",
+                    "工具 > 选项 > 图表: 调高\"图表中最大柱数\", 然后重新打开本页"),
+                 KP_TXT_FAINT, 6.4, 1);
+        }
       return;
      }
    y = KPCH_Title(px, y, LL("MFE x MAE PER TRADE", "单笔 MFE × MAE"));
@@ -529,8 +539,31 @@ void KPCH_PageMFE(const int px, int y, const int cw, const int H)
       sn += g_exc[i].net;
       if(g_exc[i].net >= 0) nwin++;
      }
+   // Scaling to the MAXIMUM lets two or three outliers crush the whole
+   // distribution into the bottom-left corner - which is exactly what a
+   // fat-tailed P&L always looks like. Scale to the 90th percentile and
+   // clamp the rest to the edge, drawn hollow so they stay honest.
+   double vals[];
+   int vn = 2*g_exc_n;
+   if(vn > 0)
+     {
+      ArrayResize(vals, vn);
+      for(int i=0; i<g_exc_n; i++)
+        {
+         vals[2*i]   = g_exc[i].mfe;
+         vals[2*i+1] = g_exc[i].mae;
+        }
+      ArraySort(vals);
+      double p90 = vals[(int)MathMin(vn-1, (int)MathFloor(vn * 0.90))];
+      if(p90 > 0)
+         m = p90;
+     }
    if(m <= 0) m = 1;
    m *= 1.06;
+   int clipped = 0;
+   for(int i=0; i<g_exc_n; i++)
+      if(g_exc[i].mfe > m || g_exc[i].mae > m)
+         clipped++;
 
    g_cv.FillTriangle(sx0, sy1, sx1, sy0, sx0, sy0, KP_TINT_GREEN);
    g_cv.FillTriangle(sx0, sy1, sx1, sy0, sx1, sy1, KP_TINT_RED);
@@ -546,12 +579,18 @@ void KPCH_PageMFE(const int px, int y, const int cw, const int H)
                 "MFE=MAE", KP_TXT_FAINT, TA_CENTER|TA_TOP);
    for(int i=0; i<g_exc_n; i++)
      {
-      int dx2 = sx0 + (int)(g_exc[i].mae / m * (side-1));
-      int dy2 = sy1 - (int)(g_exc[i].mfe / m * (side-1));
-      if(g_exc[i].net >= 0)
-         g_cv.FillCircle(dx2, dy2, 2, KP_GREEN);
+      double fx = MathMin(1.0, g_exc[i].mae / m);
+      double fy = MathMin(1.0, g_exc[i].mfe / m);
+      bool   out = (g_exc[i].mfe > m || g_exc[i].mae > m);
+      int dx2 = sx0 + (int)(fx * (side-1));
+      int dy2 = sy1 - (int)(fy * (side-1));
+      uint c = (g_exc[i].net >= 0 ? KP_GREEN : KP_RED);
+      if(out)
+         g_cv.Circle(dx2, dy2, 3, KP_YELLOW);      // pinned to the edge
+      else if(g_exc[i].net >= 0)
+         g_cv.FillCircle(dx2, dy2, 2, c);
       else
-         g_cv.Circle(dx2, dy2, 2, KP_RED);
+         g_cv.Circle(dx2, dy2, 2, c);
      }
    KPC_Lbl(sx0 + KP_S(4), sy0 + KP_S(2), "MFE", KP_TXT_DIM, 6.2);
    for(int q=0; q<5; q+=2)
@@ -560,7 +599,8 @@ void KPCH_PageMFE(const int px, int y, const int cw, const int H)
    KPC_Num(sx0, sy1 + KP_S(4), "0", KP_TXT_FAINT, 6.2);
    KPC_Lbl(sx0 + side/2, sy1 + KP_S(4),
            LL("MAE (ADVERSE)", "MAE 最大不利波动"), KP_TXT_FAINT, 6.2, 1);
-   KPC_Num(sx1, sy1 + KP_S(4), KP_Money(m, 0), KP_TXT_FAINT, 6.2, 2);
+   KPC_Num(sx1, sy1 + KP_S(4), KP_Money(m, 0) + (clipped > 0 ? "+" : ""),
+           KP_TXT_FAINT, 6.2, 2);
 
    //-- legend + key stats right of the square
    double avg_f = sf / g_exc_n, avg_a = sa / g_exc_n;
@@ -573,6 +613,14 @@ void KPCH_PageMFE(const int px, int y, const int cw, const int H)
    ly0 += KP_S(14);
    g_cv.Circle(lx0 + KP_S(3), ly0 + KP_S(5), 2, KP_RED);
    KPC_Lbl(lx0 + KP_S(10), ly0, LL("LOSS", "亏损单"), KP_TXT_DIM, 6.4);
+   if(clipped > 0)
+     {
+      ly0 += KP_S(14);
+      g_cv.Circle(lx0 + KP_S(3), ly0 + KP_S(5), 3, KP_YELLOW);
+      KPC_Lbl(lx0 + KP_S(10), ly0,
+              StringFormat(LL("OFF SCALE (%d)", "超出量程 (%d)"), clipped),
+              KP_TXT_DIM, 6.4);
+     }
    ly0 += KP_S(20);
    KPC_Lbl(lx0, ly0, "E-RATIO", KP_TXT_FAINT, 6.2);
    ly0 += KP_S(12);
@@ -641,8 +689,17 @@ void KPCH_PageMFE(const int px, int y, const int cw, const int H)
       ey += 3*KP_S(15) + KP_S(4);
      }
    int scope = MathMin(200, g_tot.closed_trades);
-   KPC_Lbl(px, ey, StringFormat("%s %d/%d   %s",
+   // resolution is not cosmetic: an excursion measured on H1 bars is a
+   // much looser bound than one measured on M1, so say which was used
+   int worst = 60;
+   for(int i=0; i<g_exc_n; i++)
+      if(g_exc[i].tf_sec > worst)
+         worst = g_exc[i].tf_sec;
+   string res = (worst <= 60 ? "M1" : worst <= 300 ? "M5" :
+                 worst <= 900 ? "M15" : worst <= 1800 ? "M30" : "H1");
+   KPC_Lbl(px, ey, StringFormat("%s %d/%d  ·  %s %s   %s",
            LL("SAMPLE", "样本"), g_exc_n, scope,
+           LL("BARS", "K线精度"), res,
            LL("ABOVE DIAGONAL = MORE FAVORABLE THAN ADVERSE",
               "对角线上方 = 顺风大于逆风, 点越靠左上越健康")), KP_TXT_DIM, 6.4);
   }
@@ -699,6 +756,10 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
         }
    if(amax <= 0) amax = 1;
 
+   // the bottom-anchored parts must measure from the page ORIGIN; y is
+   // advanced as we draw, so using it later pushed the summary off-panel
+   int y_top  = y;
+   int y_bot  = y + H;
    y = KPCH_Title(px, y, LL("P&L BY WEEKDAY x CLOSE HOUR (SERVER TIME)",
                             "盈亏分布 · 星期 x 平仓小时 (服务器时间)"));
    // the page mixes two measures in one cell; say so, or nobody can
@@ -711,8 +772,15 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
    int gw2 = cw - KP_S(30) - KP_S(58);
    double cwid = (double)gw2 / 24.0;
    int gy0 = y + KP_S(12);
-   int avail = H - KP_S(114);   // explainer + ribbon + legend + summary
-   int ch2 = MathMax(KP_S(16), MathMin(KP_S(34), avail / nrows));
+   // budget bottom-up: ribbon + legend + summary are fixed, the hourly
+   // bars are optional, and whatever is left belongs to the grid
+   int tail   = KP_S(4) + 4*KP_S(4) + KP_S(14) + KP_S(16);  // ribbon+legend+summary
+   int avail  = y_bot - gy0 - tail;
+   int ch2    = MathMax(KP_S(16), MathMin(KP_S(34), avail / nrows));
+   // if the rows hit their cap there is slack; spend it on the hourly bars
+   int bars_h = avail - ch2*nrows;
+   if(bars_h < KP_S(48))
+      bars_h = 0;
    int grid_h = ch2 * nrows;
 
    for(int h2=0; h2<24; h2+=3)
@@ -780,8 +848,8 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
       KPC_Lbl(lgx + KP_S(9), lgy, sn2[s3], sc2[s3], 6.0, 0);
      }
 
-   int by0 = sy2 + KP_S(32);   // clears the ribbon + its legend row
-   int bh2 = y + H - KP_S(30) - by0;
+   int by0 = sy2 + 4*KP_S(4) + KP_S(14);   // clears the ribbon + legend row
+   int bh2 = bars_h;
    if(bh2 >= KP_S(48))
      {
       double hourly[24];
@@ -792,13 +860,13 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
             hourly[h2] += cell_net[r2][h2];
         }
       KPC_Lbl(lx0, by0, LL("HOURLY NET", "小时净盈亏"), KP_TXT_FAINT, 6.0);
-      KPC_Bars(lx0, by0 + KP_S(13), gw2, bh2 - KP_S(15),
+      KPC_Bars(lx0, by0 + KP_S(13), gw2, bh2 - KP_S(17),
                hourly, 24, KP_GREEN, KP_RED, KP_TXT_FAINT);
      }
 
    string bd = (b_r >= 0 ? LL(dle[b_r], dlc[b_r]) : "-");
    string wd = (w_r >= 0 ? LL(dle[w_r], dlc[w_r]) : "-");
-   KPC_Lbl(px, y + H - KP_S(26), StringFormat(
+   KPC_Lbl(px, y_bot - KP_S(12), StringFormat(
            LL("BEST %s %02d:00 %s   WORST %s %02d:00 %s   %d TRADES · BY CLOSE",
               "最佳 %s %02d:00 %s   最差 %s %02d:00 %s   %d 笔 · 按平仓归集"),
            bd, b_h, KP_MoneySigned(b_v, 0),

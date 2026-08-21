@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_Fleet.mqh - KING PANEL V1.4                                   |
+//| KP_Fleet.mqh - KING PANEL V1.5                                   |
 //| Multi-account overview via the terminal COMMON files folder:     |
 //| every panel instance writes a heartbeat snapshot; every instance |
 //| lists all snapshots. Works across terminals on the same machine. |

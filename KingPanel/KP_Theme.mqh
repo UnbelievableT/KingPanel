@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_Theme.mqh - KING PANEL V1.0                                   |
+//| KP_Theme.mqh - KING PANEL V1.5                                   |
 //| Bloomberg-terminal dark theme: colors, DPI scale, formatting     |
 //+------------------------------------------------------------------+
 #ifndef KP_THEME_MQH

@@ -1,6 +1,6 @@
 ﻿//+------------------------------------------------------------------+
 //|                                                    KingPanel.mq5 |
-//|                KING PANEL V1.1 - MT5 account terminal dashboard  |
+//|                KING PANEL V1.5 - MT5 account terminal dashboard  |
 //|                                                                  |
 //|  Bloomberg-terminal style compact dashboard:                     |
 //|  Overview / Analysis / Symbols / Magics / Trade / Risk / News    |
@@ -9,10 +9,10 @@
 //+------------------------------------------------------------------+
 #property copyright "KING PANEL"
 #property link      "https://t.me/topxea"
-#property version   "1.40"
+#property version   "1.50"
 #property description "KING PANEL — Bloomberg-terminal style MT5 account dashboard"
 #property description "Telegram @topxea"
-#property description "v1.4: position automation, news guard, chart center 2.0, export, telegram, fleet"
+#property description "v1.5: two audit rounds (99 fixes), MFE/MAE history backoff, self-explaining heatmap"
 
 #include "KP_Theme.mqh"
 #include "KP_Canvas.mqh"
@@ -87,6 +87,18 @@ datetime g_next_rebuild = 0;
 string   g_owner_key    = "";
 string   g_owner_hb     = "";
 long     g_inst_id      = 0;
+datetime g_ea_start     = 0;   // attach time: proof we saw a rollover
+
+// A GlobalVariable is a double: 53 bits of mantissa. A raw ChartID is an
+// 18-digit value (~1.3e17), so (double)id rounds to a multiple of ~16 and
+// EVERY long-domain comparison against the stored value fails - even for a
+// sole instance. The claim would flap once per tick and the guards would
+// run at a fraction of their intended rate. Fold the id into 48 bits so
+// the value written is the value read back, exactly.
+long KP_InstanceId()
+  {
+   return (long)(ChartID() % 281474976710656);   // 2^48
+  }
 
 // Atomic claim: GlobalVariableSetOnCondition is a compare-and-set, so two
 // instances starting inside the same second cannot both win. The owner
@@ -144,9 +156,13 @@ int OnInit()
    g_panel_y   = (int)KP_StoreGet("ui_y", InpY);
    g_tab       = (int)KP_StoreGet("ui_tab", 0);
    g_collapsed = (KP_StoreGet("ui_collapsed", 0) > 0.5);
+   g_modal     = (KP_StoreGet("ui_modal", 0) > 0.5 ? 1 : 0);
+   g_chart_sel = (int)KP_StoreGet("ui_chart", 0);
+   if(g_chart_sel < 0 || g_chart_sel > 5)
+      g_chart_sel = 0;
    if(g_tab < 0 || g_tab > 7)
       g_tab = 0;
-   g_ot_lots   = KP_StoreGet("ot_lots", 0);
+   g_ot_lots   = 0;   // restored per-symbol on the first ORDER draw
    g_ot_sl     = (int)KP_StoreGet("ot_sl", 0);
    g_ot_tp     = (int)KP_StoreGet("ot_tp", 0);
    g_ot_dist   = (int)MathMax(10.0, KP_StoreGet("ot_dist", 200));
@@ -160,7 +176,8 @@ int OnInit()
    // check would promote a second owner.
    g_owner_key = StringFormat("KP5_OWNER_%I64d", AccountInfoInteger(ACCOUNT_LOGIN));
    g_owner_hb  = g_owner_key + "_HB";
-   g_inst_id   = ChartID();
+   g_inst_id   = KP_InstanceId();
+   g_ea_start  = TimeCurrent();
    g_is_owner  = KP_TryClaimOwner();
    KPT_BEBuf    = (int)MathMax(0, MathMin(1000, InpBEBuffer));
    KPT_TrailPts = (int)MathMax(20.0, MathMin(5000.0, KP_StoreGet("at_trail", InpTrailPts)));

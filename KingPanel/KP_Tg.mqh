@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_Tg.mqh - KING PANEL V1.4                                      |
+//| KP_Tg.mqh - KING PANEL V1.5                                      |
 //| Telegram delivery: drains the KP_Push event queue to a user bot  |
 //| and sends a daily digest at reset. Optional; off unless a bot    |
 //| token + chat id are configured. Requires the user to whitelist   |

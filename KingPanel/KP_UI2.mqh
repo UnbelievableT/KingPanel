@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_UI2.mqh - KING PANEL V1.1                                     |
+//| KP_UI2.mqh - KING PANEL V1.5                                     |
 //| Tabs: analysis / symbols / magic / trade / risk / news           |
 //| Interaction: click, wheel scroll, drag                           |
 //+------------------------------------------------------------------+
@@ -588,13 +588,13 @@ void KPU_DrawOrder(const int W, const int y0)
 
    if(g_ot_symbol == "" || !SymbolInfoInteger(g_ot_symbol, SYMBOL_SELECT))
       g_ot_symbol = _Symbol;
-   // a size saved on XAUUSD must not be re-applied to EURUSD
-   if(g_ot_lots_sym == "")
-      g_ot_lots_sym = g_ot_symbol;       // first draw: adopt the restored size
-   else if(g_ot_lots_sym != g_ot_symbol)
+   // A size saved on XAUUSD must never be re-applied to EURUSD - one click
+   // would send 50x the intended risk - so the store is keyed by symbol and
+   // a restart restores only the size that belongs to THIS symbol.
+   if(g_ot_lots_sym != g_ot_symbol)
      {
       g_ot_lots_sym = g_ot_symbol;
-      g_ot_lots = 0;                     // re-init from this symbol's minimum
+      g_ot_lots = KP_StoreGet("otl_" + g_ot_symbol, 0);
      }
    double vmin  = SymbolInfoDouble(g_ot_symbol, SYMBOL_VOLUME_MIN);
    double vstep = SymbolInfoDouble(g_ot_symbol, SYMBOL_VOLUME_STEP);
@@ -1085,6 +1085,7 @@ bool KPU_OnClick(const int lx, const int ly)
       case KPHIT_TAB:
          g_tab = (int)arg;
          g_modal = 0;
+         KP_StoreSet("ui_modal", 0);
          if(g_tab == 7) KPN_Refresh(false);
          KP_StoreSet("ui_tab", g_tab);
          return true;
@@ -1096,10 +1097,12 @@ bool KPU_OnClick(const int lx, const int ly)
 
       case KPHIT_EXPAND:
          g_modal = (g_modal == 1 ? 0 : 1);
+         KP_StoreSet("ui_modal", g_modal);
          return true;
 
       case KPHIT_CHARTSEL:
          g_chart_sel = (int)arg;
+         KP_StoreSet("ui_chart", g_chart_sel);
          return true;
 
       case KPHIT_POSSUB:
@@ -1394,7 +1397,7 @@ bool KPU_OnClick(const int lx, const int ly)
          if(st <= 0) st = 0.01;
          g_ot_lots = KPT_NormLots(g_ot_symbol,
                      g_ot_lots + ((int)arg == 1 ? st : -st));
-         KP_StoreSet("ot_lots", g_ot_lots);
+         KP_StoreSet("otl_" + g_ot_symbol, g_ot_lots);
          return true;
         }
 
@@ -1402,7 +1405,7 @@ bool KPU_OnClick(const int lx, const int ly)
         {
          double presets[4] = {0.01, 0.10, 0.50, 1.00};
          g_ot_lots = KPT_NormLots(g_ot_symbol, presets[(int)arg]);
-         KP_StoreSet("ot_lots", g_ot_lots);
+         KP_StoreSet("otl_" + g_ot_symbol, g_ot_lots);
          return true;
         }
 

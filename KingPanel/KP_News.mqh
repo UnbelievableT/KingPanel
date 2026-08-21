@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_News.mqh - KING PANEL V1.1                                    |
+//| KP_News.mqh - KING PANEL V1.5                                    |
 //| Economic calendar: native MT5 calendar API + chart marks + alerts|
 //+------------------------------------------------------------------+
 #ifndef KP_NEWS_MQH

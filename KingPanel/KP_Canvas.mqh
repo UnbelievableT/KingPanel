@@ -1,5 +1,5 @@
 ﻿//+------------------------------------------------------------------+
-//| KP_Canvas.mqh - KING PANEL V1.0                                  |
+//| KP_Canvas.mqh - KING PANEL V1.5                                  |
 //| CCanvas wrapper: text, widgets (sparkline/gauge/bars), hit map   |
 //+------------------------------------------------------------------+
 #ifndef KP_CANVAS_MQH
