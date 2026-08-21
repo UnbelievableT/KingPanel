@@ -48,6 +48,10 @@ string KP_FontCJK  = "Microsoft YaHei";   // CJK labels
 bool   KP_BrandShow    = true;
 string KP_BrandChannel = "@topxea";
 
+// only one instance per login runs the guards/automation; the others
+// are live mirrors (declared here so every layer can read it)
+bool g_is_owner = true;
+
 //--- language: 0 = English (default), 1 = Chinese -------------------
 int KP_Lang = 0;
 

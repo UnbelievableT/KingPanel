@@ -91,9 +91,13 @@ void KPU_DrawAnalysis(const int W, const int y0)
    y += bh + KP_S(5);
 
    // columns
-   int c_lbl = KP_S(68), c_ord = KP_S(38), c_lot = KP_S(44), c_win = KP_S(40);
+   int c_ord = KP_S(38), c_lot = KP_S(44), c_win = KP_S(40);
    int c_gw  = KP_S(64), c_gl  = KP_S(64), c_dd = KP_S(60), c_ddp = KP_S(46);
-   int c_net = cw - c_lbl - c_ord - c_lot - c_win - c_gw - c_gl - c_dd - c_ddp;
+   int c_net = KP_S(96);
+   // NET is fixed and the slack widens DATE, otherwise a wide panel just
+   // pushes one right-aligned number across a 450 px empty column
+   int c_lbl = MathMax(KP_S(68),
+                       cw - c_ord - c_lot - c_win - c_gw - c_gl - c_dd - c_ddp - c_net);
    int hx = px;
 
    KPC_Fill(px, y, cw, KP_S(KPL_THEAD), KP_BG_THEAD);
@@ -170,7 +174,7 @@ void KPU_DrawAnalysis(const int W, const int y0)
      }
    double swr = (t_trd > 0 ? 100.0*t_win/t_trd : 0.0);
    int sx = px, sy2 = y + KP_S(3);
-   KPC_Lbl(sx + KP_S(3), sy2, LL("TOTAL", "汇总"), KP_AMBER, 6.8, 0, true);  sx += c_lbl;
+   KPC_Lbl(sx + KP_S(3), sy2, LL("REALIZED", "已实现"), KP_AMBER, 6.8, 0, true);  sx += c_lbl;
    KPC_Num(sx + c_ord - KP_S(3), sy2, (string)t_trd, KP_TXT, 6.8, 2); sx += c_ord;
    KPC_Num(sx + c_lot - KP_S(3), sy2, KP_Lots(t_lot), KP_TXT, 6.8, 2); sx += c_lot;
    KPC_Num(sx + c_win - KP_S(3), sy2, KP_Pct(swr,0), (swr>=50 ? KP_GREEN : KP_TXT_DIM), 6.8, 2); sx += c_win;
@@ -279,7 +283,7 @@ void KPU_DrawAggTable(const int W, const int y0, const KPAggRow &rows[],
    KPC_HLine(px, px+cw-1, y, KP_AMBER_DIM);
    KPC_Lbl(px + KP_S(3), y + KP_S(5), StringFormat(LL("%d ITEMS", "共 %d 项"), n),
            KP_TXT_FAINT, 6.4);
-   KPC_Num(px + cw - KP_S(3), y + KP_S(5),
+   KPC_Val(px + cw - KP_S(3), y + KP_S(5),
            LL("NET TOTAL ", "净盈亏合计 ") + KP_MoneySigned(rowsum, 1), KP_TXT_DIM, 6.6, 2);
 
    KPU_ScrollUI(W - KP_S(18), table_y, vis*rh, tab);
@@ -370,7 +374,8 @@ void KPU_DrawPositions(const int W, const int y0)
       // positions table
       int c_sym = KP_S(72), c_dir = KP_S(28), c_lot = KP_S(50);
       int c_op  = KP_S(68), c_cp  = KP_S(68), c_pl = KP_S(84);
-      int c_tm  = cw - c_sym - c_dir - c_lot - c_op - c_cp - c_pl - KP_S(78);
+      int c_tm  = MathMax(KP_S(56),
+                          cw - c_sym - c_dir - c_lot - c_op - c_cp - c_pl - KP_S(20));
       KPC_Fill(px, y, cw, KP_S(KPL_THEAD), KP_BG_THEAD);
       int ty = y + KP_S(4), hx = px;
       KPC_Lbl(hx + KP_S(3), ty, LL("SYMBOL", "品种"), KP_TXT_DIM, 6.4);   hx += c_sym;
@@ -557,7 +562,7 @@ void KPU_DrawPositions(const int W, const int y0)
             if(g_fleet[di].locked)
                KPC_Lbl(xx + c_st - KP_S(3), ry, LL("LOCK", "锁定"), KP_RED, 6.6, 2, true);
             else
-               KPC_Num(xx + c_st - KP_S(3), ry,
+               KPC_Val(xx + c_st - KP_S(3), ry,
                        (stale ? LL("STALE", "失联") : (string)g_fleet[di].age + "s"),
                        (stale ? KP_YELLOW : KP_TXT_FAINT), 6.6, 2);
            }
@@ -565,7 +570,7 @@ void KPU_DrawPositions(const int W, const int y0)
          KPC_Lbl(px + KP_S(3), y + vis*rh + KP_S(4),
                  StringFormat(LL("%d ACCOUNTS", "共 %d 个账户"), g_fleet_n),
                  KP_TXT_FAINT, 6.4);
-         KPC_Num(px + cw - KP_S(3), y + vis*rh + KP_S(4),
+         KPC_Val(px + cw - KP_S(3), y + vis*rh + KP_S(4),
                  StringFormat(LL("TOTAL EQUITY %s   FLOAT %s", "净值合计 %s   浮动 %s"),
                  KP_MoneyAuto(sum_eq), KP_MoneySigned(sum_fl, 0)), KP_TXT_DIM, 6.6, 2);
         }
@@ -584,7 +589,9 @@ void KPU_DrawOrder(const int W, const int y0)
    if(g_ot_symbol == "" || !SymbolInfoInteger(g_ot_symbol, SYMBOL_SELECT))
       g_ot_symbol = _Symbol;
    // a size saved on XAUUSD must not be re-applied to EURUSD
-   if(g_ot_lots_sym != g_ot_symbol)
+   if(g_ot_lots_sym == "")
+      g_ot_lots_sym = g_ot_symbol;       // first draw: adopt the restored size
+   else if(g_ot_lots_sym != g_ot_symbol)
      {
       g_ot_lots_sym = g_ot_symbol;
       g_ot_lots = 0;                     // re-init from this symbol's minimum
@@ -664,7 +671,7 @@ void KPU_DrawOrder(const int W, const int y0)
    KPC_Button(px + KP_S(50), y, KP_S(18), KP_S(18), "-", KP_TXT, KP_BTN, KPHIT_OT_SL, 0, "", 7.6, false);
    KPC_Fill(px + KP_S(70), y, KP_S(56), KP_S(18), KP_BG_INPUT);
    KPC_Frame(px + KP_S(70), y, KP_S(56), KP_S(18), KP_SEP);
-   KPC_Num(px + KP_S(98), y + KP_S(3), (g_ot_sl > 0 ? (string)g_ot_sl : LL("OFF", "关")),
+   KPC_Val(px + KP_S(98), y + KP_S(3), (g_ot_sl > 0 ? (string)g_ot_sl : LL("OFF", "关")),
            (g_ot_sl > 0 ? KP_RED : KP_TXT_FAINT), 7.2, 1, true);
    KPC_Button(px + KP_S(128), y, KP_S(18), KP_S(18), "+", KP_TXT, KP_BTN, KPHIT_OT_SL, 1, "", 7.6, false);
 
@@ -673,7 +680,7 @@ void KPU_DrawOrder(const int W, const int y0)
    KPC_Button(tx + KP_S(50), y, KP_S(18), KP_S(18), "-", KP_TXT, KP_BTN, KPHIT_OT_TP, 0, "", 7.6, false);
    KPC_Fill(tx + KP_S(70), y, KP_S(56), KP_S(18), KP_BG_INPUT);
    KPC_Frame(tx + KP_S(70), y, KP_S(56), KP_S(18), KP_SEP);
-   KPC_Num(tx + KP_S(98), y + KP_S(3), (g_ot_tp > 0 ? (string)g_ot_tp : LL("OFF", "关")),
+   KPC_Val(tx + KP_S(98), y + KP_S(3), (g_ot_tp > 0 ? (string)g_ot_tp : LL("OFF", "关")),
            (g_ot_tp > 0 ? KP_GREEN : KP_TXT_FAINT), 7.2, 1, true);
    KPC_Button(tx + KP_S(128), y, KP_S(18), KP_S(18), "+", KP_TXT, KP_BTN, KPHIT_OT_TP, 1, "", 7.6, false);
    y += KP_S(24);
@@ -693,7 +700,7 @@ void KPU_DrawOrder(const int W, const int y0)
             KPC_Lbl(px, y + KP_S(1), LL("RISK TOO SMALL FOR MIN LOT",
                     "风险额不足以开出最小手数"), KP_RED, 6.4, 0, true);
          else
-            KPC_Num(px, y + KP_S(1),
+            KPC_Val(px, y + KP_S(1),
                     StringFormat("-> %s %s  =  %s %s (%.2f%%)",
                     DoubleToString(rl, (vstep > 0 && vstep < 0.01 ? 3 : 2)), LL("LOTS", "手"),
                     KP_Money(rr), g_acc.currency,
@@ -705,7 +712,7 @@ void KPU_DrawOrder(const int W, const int y0)
      {
       double per = (g_ot_sl > 0 ? KPT_MoneyPerLot(g_ot_symbol, 0, g_ot_sl) : 0.0);
       if(per > 0)
-         KPC_Num(px, y + KP_S(1),
+         KPC_Val(px, y + KP_S(1),
                  StringFormat("%s %s %s (%.2f%%)", LL("RISK AT SL", "止损处风险"),
                  KP_Money(per * g_ot_lots), g_acc.currency,
                  (g_acc.equity > 0 ? per * g_ot_lots / g_acc.equity * 100.0 : 0.0)),
@@ -715,7 +722,7 @@ void KPU_DrawOrder(const int W, const int y0)
                  KP_TXT_FAINT, 6.2);
      }
    if(g_prop.on)
-      KPC_Num(px + cw, y + KP_S(1),
+      KPC_Val(px + cw, y + KP_S(1),
               LL("DAY BUDGET ", "日内余量 ") + KP_Money(KPT_DayBudgetLeft(), 0),
               (KPT_DayBudgetLeft() <= 0.2 * g_prop.daily ? KP_RED : KP_TXT_DIM), 6.4, 2);
    y += KP_S(18);
@@ -730,7 +737,7 @@ void KPU_DrawOrder(const int W, const int y0)
       KPC_Lbl(px + cw/2, y + KP_S(4),
               LL("ORDERS LOCKED — DAILY LOSS LIMIT", "下单已锁定 — 触发当日亏损上限"),
               KP_RED, 7.2, 1, true);
-      KPC_Num(px + cw/2, y + KP_S(19),
+      KPC_Val(px + cw/2, y + KP_S(19),
               LL("UNLOCKS IN ", "解锁倒计时 ") + KPT_LockLeft(), KP_AMBER, 7.0, 1, true);
      }
    else
@@ -825,21 +832,31 @@ void KPU_DrawRisk(const int W, const int y0)
 
    KPC_Fill(px, y, cw, KP_S(20), KP_BG_THEAD);
    int ry0 = y + KP_S(4);
-   KPC_Lbl(px + KP_S(6), ry0, LL("FLOAT", "浮动"), KP_TXT_DIM, 6.4);
-   KPC_Num(px + KP_S(112), ry0, KP_MoneySigned(g_acc.floating_pl),
-           KP_PLColor(g_acc.floating_pl), 7.0, 2, true);
-   KPC_Lbl(px + KP_S(140), ry0, LL("DAY", "当日"), KP_TXT_DIM, 6.4);
-   KPC_Num(px + KP_S(246), ry0, KP_MoneySigned(KPT_DayPL()),
-           KP_PLColor(KPT_DayPL()), 7.0, 2, true);
-   KPC_Lbl(px + KP_S(274), ry0, LL("BUDGET", "日内余量"), KP_TXT_DIM, 6.4);
+   // four equal cells so the strip scales with the panel instead of
+   // stranding several hundred px at wide widths
    double bleft = KPT_DayBudgetLeft();
-   KPC_Num(px + KP_S(420), ry0, (g_prop.on ? KP_Money(bleft, 0) : "--"),
-           (!g_prop.on ? KP_TXT_FAINT :
-            bleft <= 0.2 * g_prop.daily ? KP_RED :
-            bleft <= 0.5 * g_prop.daily ? KP_YELLOW : KP_GREEN), 7.0, 2, true);
-   KPC_Lbl(px + cw - KP_S(56), ry0, LL("POS", "持仓"), KP_TXT_DIM, 6.4);
-   KPC_Num(px + cw - KP_S(8), ry0, (string)g_acc.positions,
-           (g_acc.positions > 0 ? KP_CYAN : KP_TXT_FAINT), 7.0, 2, true);
+   int q = cw / 4;
+   string k_lbl[4], k_val[4];
+   uint   k_clr[4];
+   k_lbl[0] = LL("FLOAT", "浮动");
+   k_val[0] = KP_MoneySigned(g_acc.floating_pl);
+   k_clr[0] = KP_PLColor(g_acc.floating_pl);
+   k_lbl[1] = LL("DAY", "当日");
+   k_val[1] = KP_MoneySigned(KPT_DayPL());
+   k_clr[1] = KP_PLColor(KPT_DayPL());
+   k_lbl[2] = LL("BUDGET", "日内余量");
+   k_val[2] = (g_prop.on ? KP_Money(bleft, 0) : "--");
+   k_clr[2] = (!g_prop.on ? KP_TXT_FAINT :
+               bleft <= 0.2 * g_prop.daily ? KP_RED :
+               bleft <= 0.5 * g_prop.daily ? KP_YELLOW : KP_GREEN);
+   k_lbl[3] = LL("POS", "持仓");
+   k_val[3] = (string)g_acc.positions;
+   k_clr[3] = (g_acc.positions > 0 ? KP_CYAN : KP_TXT_FAINT);
+   for(int i=0; i<4; i++)
+     {
+      KPC_Lbl(px + i*q + KP_S(6), ry0, k_lbl[i], KP_TXT_DIM, 6.4);
+      KPC_Val(px + (i+1)*q - KP_S(8), ry0, k_val[i], k_clr[i], 7.0, 2, true);
+     }
    y += KP_S(25);
 
    int gap = KP_S(5);
@@ -968,10 +985,13 @@ void KPU_DrawNews(const int W, const int y0)
             (g_ng_stars == 3 ? "★★★" : g_ng_stars == 2 ? "★★" : "★"),
             KP_YELLOW, KP_FontCJK, 6.2, 1);
    KPC_Button(gx2 + KP_S(50), y, KP_S(14), KP_S(16), "+", KP_TXT, KP_BTN, KPHIT_NG_STARS, 1, "", 6.8, false);
-   if(cw >= KP_S(600))
+   // the hint may only use what is left after the star stepper
+   int hint_x = gx2 + KP_S(64) + KP_S(10);
+   if(px + cw - hint_x > KP_S(60))
       KPC_Lbl(px + cw, y + KP_S(3),
-              LL("GUARD: blocks entries / flattens exposed symbols",
-                 "护盾: 拦截开单 / 平掉相关货币持仓"),
+              KPU_Trunc(LL("GUARD: blocks entries / flattens exposed symbols",
+                           "护盾: 拦截开单 / 平掉相关货币持仓"),
+                        px + cw - hint_x, KPU_LblFont(), 6.2),
               KP_TXT_FAINT, 6.2, 2);
    y += KP_S(18);
 
@@ -1508,7 +1528,8 @@ bool KPU_OnMouse(const int cx, const int cy, const uint flags)
    if(inside != g_hover_panel)
      {
       g_hover_panel = inside;
-      if(inside)
+      // capturing during a drag would store our own "false" forever
+      if(inside && !g_dragging)
          g_chart_scroll_saved = (bool)ChartGetInteger(0, CHART_MOUSE_SCROLL);
       if(!g_dragging)
          ChartSetInteger(0, CHART_MOUSE_SCROLL, inside ? false : g_chart_scroll_saved);

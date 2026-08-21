@@ -158,6 +158,25 @@ void KPC_Num(const int x, const int y, const string txt, const uint clr,
    KPC_Text(x, y, txt, clr, KP_FontMono, pt, align, bold);
   }
 
+// value text: monospace for pure ASCII (column alignment), CJK font as
+// soon as the string carries a localized word - Consolas has no CJK
+// glyphs and would render tofu boxes
+bool KPC_HasCJK(const string s)
+  {
+   int n = StringLen(s);
+   for(int i=0; i<n; i++)
+      if(StringGetCharacter(s, i) > 127)
+         return true;
+   return false;
+  }
+
+void KPC_Val(const int x, const int y, const string txt, const uint clr,
+             const double pt, const int align=0, const bool bold=false)
+  {
+   KPC_Text(x, y, txt, clr, (KPC_HasCJK(txt) ? KP_FontCJK : KP_FontMono),
+            pt, align, bold);
+  }
+
 // UI label text: mono in English mode, CJK font in Chinese mode
 void KPC_Lbl(const int x, const int y, const string txt, const uint clr,
              const double pt, const int align=0, const bool bold=false)

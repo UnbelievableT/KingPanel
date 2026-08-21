@@ -517,6 +517,7 @@ void KPData_SampleEquity()
 
 //--- full history rebuild -------------------------------------------
 string g_hist_fp = "";
+string g_hist_pending_fp = "";
 
 void KPData_Rebuild()
   {
@@ -541,7 +542,7 @@ void KPData_Rebuild()
          KPData_ComputeExcursions();   // keep filling the MFE/MAE cache
          return;
         }
-      g_hist_fp = fp;
+      g_hist_pending_fp = fp;   // committed only once the scan completes
      }
    // a failed select must leave the previous statistics AND the previous
    // rebuild stamp intact - zeroing them would tell the prop guard the
@@ -561,6 +562,7 @@ void KPData_Rebuild()
    g_curve_n = 0;
 
    int deals = HistoryDealsTotal();
+   double g_inout_closed = 0;   // volume the current reversal actually closed
    CHashMap<long,int> posmap;
 
    datetime today_t = KP_DayStart(TimeCurrent());
@@ -674,11 +676,12 @@ void KPData_Rebuild()
       else if(entry == DEAL_ENTRY_INOUT)
         {
          // split the reversal: the part that offsets open volume is an
-         // exit, whatever is left opens the new side
+         // exit, whatever is left opens the new leg
          double still_open = g_pos[pidx].lots - g_pos[pidx].lots_out;
          double closing    = MathMin(MathMax(0.0, still_open), lots);
          double opening    = lots - closing;
          double dprice     = HistoryDealGetDouble(tk, DEAL_PRICE);
+         g_inout_closed    = closing;      // read by the attribution below
          if(closing > 0)
            {
             g_pos[pidx].exit_num += dprice * closing;
@@ -688,9 +691,17 @@ void KPData_Rebuild()
            }
          if(opening > 0)
            {
-            g_pos[pidx].lots     += opening;
-            g_pos[pidx].vwap_num += dprice * opening;
-            g_pos[pidx].dir = (dtype == DEAL_TYPE_BUY ? 0 : 1);
+            // the surviving leg trades the OTHER way, so the entry basis
+            // restarts here - keeping the old VWAP would report an entry
+            // price that contradicts the direction we now store
+            g_pos[pidx].dir      = (dtype == DEAL_TYPE_BUY ? 0 : 1);
+            g_pos[pidx].lots     = opening;
+            g_pos[pidx].vwap_num = dprice * opening;
+            g_pos[pidx].lots_out = 0;
+            g_pos[pidx].exit_num = 0;
+            g_pos[pidx].open_time = dtime;
+            g_pos[pidx].close_time = 0;
+            g_pos[pidx].sl0 = HistoryDealGetDouble(tk, DEAL_SL);
            }
         }
 
@@ -727,27 +738,32 @@ void KPData_Rebuild()
         }
 
       // ---- OUT deal: full stats attribution ----
+      // a reversal only CLOSES part of its volume; the rest opened a new
+      // leg and must not be counted as closed volume
+      double out_lots = lots;
+      if(entry == DEAL_ENTRY_INOUT)
+         out_lots = MathMin(lots, g_inout_closed);
       int di = KP_DayBucket(dtime);
-      KP_AddDealToRow(g_days[di], net, lots);
+      KP_AddDealToRow(g_days[di], net, out_lots);
       KP_RowDD2(g_days[di], trd, net, bal);
 
       int wi = KP_WeekBucket(dtime);
-      KP_AddDealToRow(g_weeks[wi], net, lots);
+      KP_AddDealToRow(g_weeks[wi], net, out_lots);
       KP_RowDD2(g_weeks[wi], trd, net, bal);
 
       int mi2 = KP_MonthBucket(dtime);
-      KP_AddDealToRow(g_months[mi2], net, lots);
+      KP_AddDealToRow(g_months[mi2], net, out_lots);
       KP_RowDD2(g_months[mi2], trd, net, bal);
 
       int yi = KP_YearBucket(dtime);
-      KP_AddDealToRow(g_years[yi], net, lots);
+      KP_AddDealToRow(g_years[yi], net, out_lots);
       KP_RowDD2(g_years[yi], trd, net, bal);
 
       int si = KP_NameBucket(g_syms, symbol);
-      KP_AddDealToRow(g_syms[si], net, lots);
+      KP_AddDealToRow(g_syms[si], net, out_lots);
 
       int mgi = KP_MagicBucket(g_magics, g_pos[pidx].magic);
-      KP_AddDealToRow(g_magics[mgi], net, lots);
+      KP_AddDealToRow(g_magics[mgi], net, out_lots);
 
       // EA vs manual (per OUT deal)
       // attribute by the magic that OPENED the position: a closing deal
@@ -762,7 +778,7 @@ void KPData_Rebuild()
       if(dtime >= month_t) g_tot.month_pl += net;
       if(dtime >= reset_t) g_tot.reset_pl += net;
 
-      g_tot.lots += lots;
+      g_tot.lots += out_lots;
       if(g_tot.first_trade == 0)
          g_tot.first_trade = dtime;
 
@@ -872,6 +888,9 @@ void KPData_Rebuild()
         }
      }
 
+   // the scan completed: only now may the fast path trust this snapshot
+   g_hist_fp = g_hist_pending_fp;
+
    KPData_ComputeExcursions();
   }
 
@@ -893,6 +912,7 @@ struct KPExc
    double            exitv;      // exit vwap
    double            hi;         // window high
    double            lo;         // window low
+   datetime          ctime;      // close time (window pruning key)
   };
 
 KPExc g_exc[];
@@ -957,15 +977,6 @@ void KPData_ComputeExcursions()
       if(fe_p < 0) fe_p = 0;
       if(ae_p < 0) ae_p = 0;
 
-      // the cache must not outgrow the window it reports on, otherwise
-      // the MFE/MAE page aggregates every trade seen since attach while
-      // still labelling the sample "n / 200"
-      if(g_exc_n >= KP_EXC_SCOPE)
-        {
-         for(int s=0; s<g_exc_n-1; s++)
-            g_exc[s] = g_exc[s+1];
-         g_exc_n--;
-        }
       int n = g_exc_n;
       ArrayResize(g_exc, n+1, 64);
       g_exc[n].pos_id = g_pos[i].pos_id;
@@ -978,8 +989,27 @@ void KPData_ComputeExcursions()
                          g_pos[i].exit_num / g_pos[i].lots_out : entry);
       g_exc[n].hi     = hi;
       g_exc[n].lo     = lo;
+      g_exc[n].ctime  = g_pos[i].close_time;
       g_exc_n++;
       added++;
+     }
+
+   // Prune by WINDOW, not by insertion order. Positions are visited
+   // newest-first, so evicting index 0 dropped the newest entry and made
+   // the cache churn 40 CopyRates calls on every rebuild forever.
+   if(g_close_n > 0 && g_exc_n > 0)
+     {
+      int first = (int)MathMax(0, g_close_n - KP_EXC_SCOPE);
+      datetime cutoff = g_pos[g_close_order[first]].close_time;
+      int w = 0;
+      for(int i=0; i<g_exc_n; i++)
+         if(g_exc[i].ctime >= cutoff)
+           {
+            if(w != i)
+               g_exc[w] = g_exc[i];
+            w++;
+           }
+      g_exc_n = w;
      }
   }
 

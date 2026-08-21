@@ -76,17 +76,16 @@ int KPT_CloseTicket(const ulong ticket)
    return 0;
   }
 
-// mine_only: automation side effects must never cancel another EA's
-// working orders - only an explicit user click may do that
-int KPT_DeletePendings(const bool mine_only=false)
+// Account-wide by design: a daily-loss breach is a hard stop, and a
+// pending left working would re-open the risk the guard just closed.
+// (The news guard uses the currency-scoped variant below instead.)
+int KPT_DeletePendings()
   {
    int sent = 0;
    for(int i=OrdersTotal()-1; i>=0; i--)
      {
       ulong tk = OrderGetTicket(i);
       if(tk == 0)
-         continue;
-      if(mine_only && OrderGetInteger(ORDER_MAGIC) != KPT_PanelMagic)
          continue;
       if(g_trade.OrderDelete(tk))
          sent++;
@@ -194,6 +193,16 @@ void KPT_PropSave()
    KP_StoreSet("prop_warned", (double)(long)g_prop_warned_anchor);
   }
 
+// a mirror instance holds its own copy of state the OWNER mutates, so
+// it must re-read the shared values before anything gates on them
+void KPT_PropReload()
+  {
+   g_prop.on         = (KP_StoreGet("prop_on", g_prop.on ? 1 : 0) > 0.5);
+   g_prop.daily      = KP_StoreGet("prop_daily", g_prop.daily);
+   g_prop.lock_until = (datetime)(long)KP_StoreGet("prop_lock",
+                                       (double)(long)g_prop.lock_until);
+  }
+
 bool KPT_Locked()
   {
    return (TimeCurrent() < g_prop.lock_until);
@@ -225,8 +234,22 @@ void KPT_PropAnchorTick()
    datetime a = KP_ResetAnchor(TimeCurrent());
    if(g_prop_eq_time == a)
       return;
+   // Snapshotting live equity is only valid if we were actually running
+   // AT the rollover. On a mid-day attach it would declare "the day
+   // starts now", hiding a loss already taken and disarming the guard.
+   bool observed = (g_prop_eq_time == a - 86400) || (TimeCurrent() - a <= 120);
+   if(!observed)
+     {
+      // reconstruct the day-open equity from the realized window we do
+      // have, so DayPL degrades to realized-since-reset + floating
+      if(g_last_rebuild < a)
+         return;                       // stats do not cover this window yet
+      g_prop_eq_val = g_acc.equity - g_tot.reset_cash
+                    - g_tot.reset_pl - g_acc.floating_pl;
+     }
+   else
+      g_prop_eq_val = g_acc.equity;
    g_prop_eq_time = a;
-   g_prop_eq_val  = g_acc.equity;
    KP_StoreSet("prop_eq_t", (double)(long)a);
    KP_StoreSet("prop_eq_v", g_prop_eq_val);
   }
@@ -313,7 +336,8 @@ double KPT_RiskLots(const string sym, const int dir, const double risk_money,
    double want = risk_money / per_lot;
    double vmax = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
    if(vmax > 0 && want > vmax)
-      return 0.0;    // clamping here would silently take LESS risk than asked
+      return -1.0;   // distinct from "too small": clamping would silently
+                     // take LESS risk than the user asked for
    double v = KPT_NormLotsFloor(sym, want);
    if(v > 0)
       realized_risk = v * per_lot;
@@ -611,7 +635,15 @@ void KPT_TrailFail(const ulong ticket)
          g_tf_until[i] = TimeCurrent() + 30;
          return;
         }
-   int slot = (g_tf_n < 16 ? g_tf_n++ : 0);
+   static int g_tf_next = 0;
+   int slot;
+   if(g_tf_n < 16)
+      slot = g_tf_n++;
+   else
+     {
+      slot = g_tf_next;                       // round-robin, not always 0
+      g_tf_next = (g_tf_next + 1) % 16;
+     }
    g_tf_ticket[slot] = ticket;
    g_tf_until[slot]  = TimeCurrent() + 30;
   }
@@ -661,7 +693,7 @@ void KPT_TrailTick()
 //--- news auto-flat: close exposed positions before filtered events -
 void KPT_NewsGuardTick()
   {
-   if(!g_ng_flat_on || !g_news_ok || g_live_count == 0)
+   if(!g_ng_flat_on || !g_news_ok || (g_live_count == 0 && OrdersTotal() == 0))
       return;
    datetime now = TimeCurrent();
    for(int i=0; i<g_news_count; i++)
@@ -704,6 +736,31 @@ void KPT_NewsGuardTick()
      }
   }
 
+// Fire a one-shot guard: flatten, disarm ONLY when the book is really
+// flat, and announce exactly once - a guard that cannot flatten (market
+// closed, autotrading off, requotes) must stay armed and retry quietly
+// instead of pushing the same alert to the phone every second.
+bool KPT_GuardFire(bool &flag, const string what, datetime &warn_t)
+  {
+   int n = KPT_CloseBy(KP_CLOSE_ALL);
+   if(PositionsTotal() == 0)
+     {
+      flag = false;
+      KPT_RiskSave();
+      string m = what + StringFormat(LL(", closed %d", ", 全平 %d 单"), n);
+      KPT_RiskMsg(m);
+      if(KP_PushRisk) KP_Push(m);
+      return true;
+     }
+   if(TimeCurrent() - warn_t >= 60)
+     {
+      warn_t = TimeCurrent();
+      KPT_RiskMsg(what + LL(" - could not flatten, still armed",
+                            " - 平仓未成功, 保持武装"));
+     }
+   return false;
+  }
+
 // call every timer tick; true if any action fired
 bool KPT_RiskCheck()
   {
@@ -712,54 +769,33 @@ bool KPT_RiskCheck()
 
    if(g_risk.sl_on && g_acc.positions > 0 && fpl <= -MathAbs(g_risk.sl_val))
      {
-      int n = KPT_CloseBy(KP_CLOSE_ALL);
-      // disarm ONLY once the book is actually flat - a rejected close
-      // (requote / no quotes / autotrading off) must leave the guard
-      // armed so the next tick retries instead of silently giving up
-      if(PositionsTotal() == 0)
-        {
-         g_risk.sl_on = false;
-         KPT_RiskSave();
-        }
-      string m1 = StringFormat(LL("Loss guard %.2f <= -%.2f, closed %d",
-                                  "浮亏触发 %.2f ≤ -%.2f, 全平 %d 单"),
-                  fpl, MathAbs(g_risk.sl_val), n);
-      KPT_RiskMsg(m1);
-      if(KP_PushRisk) KP_Push(m1);
-      fired = true;
+      static datetime w_sl = 0;
+      if(KPT_GuardFire(g_risk.sl_on,
+                       StringFormat(LL("Loss guard %.2f <= -%.2f",
+                                       "浮亏触发 %.2f ≤ -%.2f"),
+                                    fpl, MathAbs(g_risk.sl_val)), w_sl))
+         fired = true;
      }
 
    if(g_risk.tp_on && g_acc.positions > 0 && fpl >= MathAbs(g_risk.tp_val))
      {
-      int n = KPT_CloseBy(KP_CLOSE_ALL);
-      if(PositionsTotal() == 0)
-        {
-         g_risk.tp_on = false;
-         KPT_RiskSave();
-        }
-      string m2 = StringFormat(LL("Profit guard %.2f >= %.2f, closed %d",
-                                  "浮盈触发 %.2f ≥ %.2f, 全平 %d 单"),
-                  fpl, MathAbs(g_risk.tp_val), n);
-      KPT_RiskMsg(m2);
-      if(KP_PushRisk) KP_Push(m2);
-      fired = true;
+      static datetime w_tp = 0;
+      if(KPT_GuardFire(g_risk.tp_on,
+                       StringFormat(LL("Profit guard %.2f >= %.2f",
+                                       "浮盈触发 %.2f ≥ %.2f"),
+                                    fpl, MathAbs(g_risk.tp_val)), w_tp))
+         fired = true;
      }
 
    if(g_risk.floor_on && g_risk.floor_val > 0 &&
       g_acc.equity <= g_risk.floor_val && g_acc.positions > 0)
      {
-      int n = KPT_CloseBy(KP_CLOSE_ALL);
-      if(PositionsTotal() == 0)
-        {
-         g_risk.floor_on = false;
-         KPT_RiskSave();
-        }
-      string m3 = StringFormat(LL("Equity floor %.2f <= %.2f, closed %d",
-                                  "净值保护 %.2f ≤ %.2f, 全平 %d 单"),
-                  g_acc.equity, g_risk.floor_val, n);
-      KPT_RiskMsg(m3);
-      if(KP_PushRisk) KP_Push(m3);
-      fired = true;
+      static datetime w_fl = 0;
+      if(KPT_GuardFire(g_risk.floor_on,
+                       StringFormat(LL("Equity floor %.2f <= %.2f",
+                                       "净值保护 %.2f ≤ %.2f"),
+                                    g_acc.equity, g_risk.floor_val), w_fl))
+         fired = true;
      }
 
    // prop daily-loss guard: realized-since-reset + floating.
@@ -821,13 +857,13 @@ bool KPT_RiskCheck()
         {
          if(g_acc.positions > 0)
            {
-            int n = KPT_CloseBy(KP_CLOSE_ALL);
-            string m4 = StringFormat(LL("Timed close %02d:%02d, closed %d",
-                                        "定时平仓 %02d:%02d, 全平 %d 单"),
-                        g_risk.time_hh, g_risk.time_mm, n);
-            KPT_RiskMsg(m4);
-            if(KP_PushRisk) KP_Push(m4);
-            fired = true;
+            static datetime w_tc = 0;
+            bool done = false;
+            if(KPT_GuardFire(done,
+                             StringFormat(LL("Timed close %02d:%02d",
+                                             "定时平仓 %02d:%02d"),
+                                          g_risk.time_hh, g_risk.time_mm), w_tc))
+               fired = true;
            }
          // the day counts as handled only when nothing is left open,
          // otherwise the next tick retries the flatten

@@ -84,8 +84,39 @@ input string InpChannel    = "@topxea";    // Telegram channel
 //--- state -----------------------------------------------------------
 bool     g_dirty        = true;
 datetime g_next_rebuild = 0;
-bool     g_is_owner     = true;   // only the owner instance may trade
 string   g_owner_key    = "";
+string   g_owner_hb     = "";
+long     g_inst_id      = 0;
+
+// Atomic claim: GlobalVariableSetOnCondition is a compare-and-set, so two
+// instances starting inside the same second cannot both win. The owner
+// re-verifies every tick and demotes itself if it was taken over.
+bool KP_TryClaimOwner()
+  {
+   bool have = GlobalVariableCheck(g_owner_key);
+   double cur = (have ? GlobalVariableGet(g_owner_key) : 0);
+   datetime hb = (GlobalVariableCheck(g_owner_hb)
+                  ? (datetime)(long)GlobalVariableGet(g_owner_hb) : 0);
+   if(have && (long)cur == g_inst_id)
+      return true;                                  // already ours
+   if(have && TimeLocal() - hb <= 15)
+      return false;                                 // a live owner holds it
+   if(have)
+     {
+      if(!GlobalVariableSetOnCondition(g_owner_key, (double)g_inst_id, cur))
+         return false;                              // lost the race
+     }
+   else
+     {
+      GlobalVariableTemp(g_owner_key);
+      GlobalVariableSet(g_owner_key, (double)g_inst_id);
+      if((long)GlobalVariableGet(g_owner_key) != g_inst_id)
+         return false;
+     }
+   GlobalVariableTemp(g_owner_hb);
+   GlobalVariableSet(g_owner_hb, (double)(long)TimeLocal());
+   return true;
+  }
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -124,17 +155,13 @@ int OnInit()
    KPT_PropAnchorLoad();
    // only ONE instance per login may run the guards/automation, or two
    // panels would both fire the same close and both write the same GVs
-   string owner_key = StringFormat("KP5_OWNER_%I64d", AccountInfoInteger(ACCOUNT_LOGIN));
-   if(!GlobalVariableCheck(owner_key) ||
-      TimeCurrent() - (datetime)(long)GlobalVariableGet(owner_key) > 15)
-     {
-      g_is_owner = true;
-      GlobalVariableTemp(owner_key);
-      GlobalVariableSet(owner_key, (double)(long)TimeCurrent());
-     }
-   else
-      g_is_owner = false;
-   g_owner_key = owner_key;
+   // TimeLocal (machine clock), never TimeCurrent: two panels on symbols
+   // with different quote flow do not share a broker clock, and the stale
+   // check would promote a second owner.
+   g_owner_key = StringFormat("KP5_OWNER_%I64d", AccountInfoInteger(ACCOUNT_LOGIN));
+   g_owner_hb  = g_owner_key + "_HB";
+   g_inst_id   = ChartID();
+   g_is_owner  = KP_TryClaimOwner();
    KPT_BEBuf    = (int)MathMax(0, MathMin(1000, InpBEBuffer));
    KPT_TrailPts = (int)MathMax(20.0, MathMin(5000.0, KP_StoreGet("at_trail", InpTrailPts)));
    KP_AliasLoad(InpMagicAliases);
@@ -155,6 +182,7 @@ int OnInit()
       return INIT_FAILED;
      }
 
+   g_chart_scroll_saved = (bool)ChartGetInteger(0, CHART_MOUSE_SCROLL);
    ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true);
    ChartSetInteger(0, CHART_EVENT_MOUSE_WHEEL, true);
 
@@ -182,7 +210,13 @@ void OnDeinit(const int reason)
    if(g_is_owner)
      {
       KPF_Cleanup();
-      GlobalVariableDel(g_owner_key);
+      // only delete a claim we still hold
+      if(GlobalVariableCheck(g_owner_key) &&
+         (long)GlobalVariableGet(g_owner_key) == g_inst_id)
+        {
+         GlobalVariableDel(g_owner_key);
+         GlobalVariableDel(g_owner_hb);
+        }
      }
    KPN_ClearMarks();
    KP_RestoreChartTheme();
@@ -218,12 +252,22 @@ void OnTimer()
 
    KPT_PropAnchorTick();
 
-   // ownership heartbeat: a stale claim (crashed instance) is taken over
+   // ownership: the owner must verify it still holds the claim (another
+   // instance may have taken over), everyone else retries the claim
    if(g_is_owner)
-      GlobalVariableSet(g_owner_key, (double)(long)TimeCurrent());
-   else if(!GlobalVariableCheck(g_owner_key) ||
-           TimeCurrent() - (datetime)(long)GlobalVariableGet(g_owner_key) > 15)
-      g_is_owner = true;
+     {
+      if(GlobalVariableCheck(g_owner_key) &&
+         (long)GlobalVariableGet(g_owner_key) == g_inst_id)
+         GlobalVariableSet(g_owner_hb, (double)(long)TimeLocal());
+      else
+         g_is_owner = false;          // demoted
+     }
+   else
+     {
+      g_is_owner = KP_TryClaimOwner();
+      if(!g_is_owner)
+         KPT_PropReload();            // follow the owner's lock state
+     }
 
    // risk guards (owner only)
    if(g_is_owner && KPT_RiskCheck())

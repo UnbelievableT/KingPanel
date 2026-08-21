@@ -8,6 +8,7 @@
 #ifndef KP_TG_MQH
 #define KP_TG_MQH
 
+bool   g_tg_failed = false;   // last send failed (header shows a red TG)
 string g_tg_token = "";
 string g_tg_chat  = "";
 bool   g_tg_daily = false;
@@ -46,6 +47,10 @@ bool KPTG_Send(const string text)
    ResetLastError();
    // keep the blocking window short: this runs on the chart thread
    int code = WebRequest("POST", url, headers, 1200, data, result, rheaders);
+   if(code != 200)
+      g_tg_failed = true;
+   else
+      g_tg_failed = false;
    if(code == -1)
      {
       if(!g_tg_hinted)

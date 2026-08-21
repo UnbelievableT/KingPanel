@@ -140,7 +140,7 @@ int KPU_PanelH()
    // sizing them to the whole window just paints a large empty band
    if(g_modal == 0 && (g_tab == 5 || g_tab == 6))
      {
-      int form_h = frame + KP_S(g_tab == 5 ? 216 : 322);
+      int form_h = frame + KP_S(g_tab == 5 ? 194 : 308);
       if(form_h < h)
          h = form_h;
      }
@@ -197,7 +197,7 @@ void KPU_KV(const int x, const int y, const int w, const string k,
             const string v, const uint vclr)
   {
    KPC_Lbl(x, y, k, KP_TXT_DIM, 6.6);
-   KPC_Num(x + w, y, v, vclr, 6.8, 2);
+   KPC_Val(x + w, y, v, vclr, 6.8, 2);   // value may be localized text
   }
 
 // selector chip (active = amber block, inactive = dim text)
@@ -244,6 +244,13 @@ void KPU_DrawHeader(const int W)
    // algo status dot
    uint ac = (g_acc.algo_ok ? KP_GREEN : KP_RED);
    KPC_Fill(W - KP_S(37), KP_S(9), KP_S(6), KP_S(6), ac);
+   // a mirror instance must say so - it does not run the guards
+   if(!g_is_owner)
+      KPC_Text(W - KP_S(46), KP_S(6), "M", KP_YELLOW, KP_FontMono, 6.4, 2, true);
+   // a Telegram send that keeps failing must stay visible, not scroll
+   // out of the footer after two minutes
+   else if(g_tg_failed)
+      KPC_Text(W - KP_S(46), KP_S(6), "TG", KP_RED, KP_FontMono, 6.4, 2, true);
 
    // export button
    int ex2 = W - KP_S(104), ew2 = KP_S(30);

@@ -508,11 +508,13 @@ void KPCH_PageMFE(const int px, int y, const int cw, const int H)
    if(g_exc_n < 1)
      {
       KPCH_Empty(px, y, cw, H,
-                 LL("NO SAMPLE YET (M1 HISTORY LOADING)", "暂无样本 (M1 历史加载中)"));
+                 g_close_n == 0 ? LL("NO CLOSED TRADES YET", "尚无已平仓交易")
+                                : LL("NO SAMPLE YET (M1 HISTORY LOADING)",
+                                     "暂无样本 (M1 历史加载中)"));
       return;
      }
    y = KPCH_Title(px, y, LL("MFE x MAE PER TRADE", "单笔 MFE × MAE"));
-   int side = MathMin(MathMin(cw - KP_S(150), H - KP_S(110)), KP_S(400));
+   int side = MathMin(cw - KP_S(150), H - KP_S(110));
    int sx0 = px, sy0 = y;
    int sx1 = sx0 + side - 1, sy1 = sy0 + side - 1;
 
@@ -702,7 +704,7 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
    int gw2 = cw - KP_S(30) - KP_S(58);
    double cwid = (double)gw2 / 24.0;
    int gy0 = y + KP_S(12);
-   int avail = H - KP_S(90);
+   int avail = H - KP_S(102);   // ribbon + legend row + summary
    int ch2 = MathMax(KP_S(16), MathMin(KP_S(34), avail / nrows));
    int grid_h = ch2 * nrows;
 
@@ -758,13 +760,13 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
             KPC_Fill(lx0 + (int)(h2*cwid), yb,
                      (int)MathCeil(cwid) - 1, KP_S(3), sc2[s3]);
         }
-      // names need their own stride: the 4 px bar pitch is far smaller
-      // than a glyph, so sharing it stacked all four into one smear
-      KPC_Num(lx0 + gw2 + KP_S(6) + s3*KP_S(30), sy2 - KP_S(1),
+      // one legend row under the ribbon, spread across the grid span:
+      // the right gutter is only ~58 px and could not hold four names
+      KPC_Num(lx0 + s3*(gw2/4), sy2 + 4*KP_S(4) + KP_S(2),
               sn2[s3], sc2[s3], 6.0, 0);
      }
 
-   int by0 = sy2 + KP_S(20);
+   int by0 = sy2 + KP_S(32);   // clears the ribbon + its legend row
    int bh2 = y + H - KP_S(30) - by0;
    if(bh2 >= KP_S(48))
      {
