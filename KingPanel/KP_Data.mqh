@@ -918,6 +918,29 @@ struct KPExc
 KPExc g_exc[];
 int   g_exc_n = 0;
 
+// In-memory retry backoff for missing M1 history. The old persisted
+// 3-strike blacklist condemned every position within the first seconds
+// after attach - the 1 s timer burned all three attempts while the
+// terminal was still DOWNLOADING the history - and kept that verdict in
+// GlobalVariables for four weeks. Now: retry every 30 s, give up after
+// 8 real attempts, forget everything on detach.
+struct KPExcTry
+  {
+   long              pid;
+   int               tries;
+   datetime          last;
+  };
+KPExcTry g_exc_try[];
+int      g_exc_try_n = 0;
+
+int KPExc_TryIdx(const long pid)
+  {
+   for(int i=0; i<g_exc_try_n; i++)
+      if(g_exc_try[i].pid == pid)
+         return i;
+   return -1;
+  }
+
 bool KPExc_Have(const long pid)
   {
    for(int i=0; i<g_exc_n; i++)
@@ -950,18 +973,31 @@ void KPData_ComputeExcursions()
       if(ts <= 0 || tv <= 0)
          continue;   // symbol gone from market watch
 
+      int ti = KPExc_TryIdx(g_pos[i].pos_id);
+      if(ti >= 0 && (g_exc_try[ti].tries >= 8 ||
+                     TimeCurrent() - g_exc_try[ti].last < 30))
+         continue;
+
       double entry = g_pos[i].vwap_num / g_pos[i].lots;
+      // floor to the bar boundary: a trade opened and closed inside one
+      // minute has no bar whose OPEN time falls in [open, close], and a
+      // range CopyRates would return 0 forever
+      datetime from = g_pos[i].open_time - (g_pos[i].open_time % 60);
       ResetLastError();
       int got = CopyRates(g_pos[i].symbol, PERIOD_M1,
-                          g_pos[i].open_time, g_pos[i].close_time, rates);
+                          from, g_pos[i].close_time, rates);
       if(got <= 0)
         {
-         // history that never arrives (delisted symbol, broker cut-off)
-         // would otherwise be re-requested on every rebuild forever
-         if(KP_StoreGet("nx_" + (string)g_pos[i].pos_id, 0) > 2.5)
-            continue;
-         KP_StoreSet("nx_" + (string)g_pos[i].pos_id,
-                     KP_StoreGet("nx_" + (string)g_pos[i].pos_id, 0) + 1);
+         if(ti < 0)
+           {
+            ti = g_exc_try_n;
+            ArrayResize(g_exc_try, ti+1, 32);
+            g_exc_try[ti].pid   = g_pos[i].pos_id;
+            g_exc_try[ti].tries = 0;
+            g_exc_try_n++;
+           }
+         g_exc_try[ti].tries++;
+         g_exc_try[ti].last = TimeCurrent();
          continue;
         }
       bars_budget -= got;

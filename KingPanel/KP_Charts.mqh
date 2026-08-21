@@ -699,17 +699,25 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
         }
    if(amax <= 0) amax = 1;
 
-   y = KPCH_Title(px, y, LL("SESSION HEATMAP (SERVER TIME)", "时段热力图 (服务器时间)"));
+   y = KPCH_Title(px, y, LL("P&L BY WEEKDAY x CLOSE HOUR (SERVER TIME)",
+                            "盈亏分布 · 星期 x 平仓小时 (服务器时间)"));
+   // the page mixes two measures in one cell; say so, or nobody can
+   // read it: color carries the money, the digit carries the count
+   KPC_Lbl(px, y, LL("CELL COLOR = NET P&L (GREEN WIN / RED LOSS) - NUMBER = TRADES - ROW END = DAY TOTAL - STRIPES = MARKET HOURS",
+                     "格子颜色=该小时平仓的净盈亏(绿赚红亏) · 格内数字=笔数 · 行尾=当天合计 · 下方色带=各市场开市时段"),
+           KP_TXT_FAINT, 6.0);
+   y += KP_S(12);
    int lx0 = px + KP_S(30);
    int gw2 = cw - KP_S(30) - KP_S(58);
    double cwid = (double)gw2 / 24.0;
    int gy0 = y + KP_S(12);
-   int avail = H - KP_S(102);   // ribbon + legend row + summary
+   int avail = H - KP_S(114);   // explainer + ribbon + legend + summary
    int ch2 = MathMax(KP_S(16), MathMin(KP_S(34), avail / nrows));
    int grid_h = ch2 * nrows;
 
    for(int h2=0; h2<24; h2+=3)
       KPC_Num(lx0 + (int)(h2*cwid), y, StringFormat("%02d", h2), KP_TXT_FAINT, 6.2);
+   KPC_Lbl(px + cw - KP_S(2), y, LL("DAY NET", "当天合计"), KP_TXT_FAINT, 6.0, 2);
 
    string dle[7] = {"MON","TUE","WED","THU","FRI","SAT","SUN"};
    string dlc[7] = {"周一","周二","周三","周四","周五","周六","周日"};
@@ -741,7 +749,11 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
    int off_h = (int)MathRound((double)(long)(TimeTradeServer() - TimeGMT()) / 3600.0);
    int  s0[4] = {21, 0, 7, 12};
    int  s1[4] = {6, 9, 16, 21};
-   string sn2[4] = {"SYD","TYO","LON","NYC"};
+   string sn2[4];
+   sn2[0] = LL("SYDNEY", "悉尼");
+   sn2[1] = LL("TOKYO", "东京");
+   sn2[2] = LL("LONDON", "伦敦");
+   sn2[3] = LL("NEW YORK", "纽约");
    uint sc2[4];
    sc2[0] = 0xFF6E7686;
    sc2[1] = 0xFFD6A832;
@@ -760,10 +772,12 @@ void KPCH_PageHeat(const int px, int y, const int cw, const int H)
             KPC_Fill(lx0 + (int)(h2*cwid), yb,
                      (int)MathCeil(cwid) - 1, KP_S(3), sc2[s3]);
         }
-      // one legend row under the ribbon, spread across the grid span:
-      // the right gutter is only ~58 px and could not hold four names
-      KPC_Num(lx0 + s3*(gw2/4), sy2 + 4*KP_S(4) + KP_S(2),
-              sn2[s3], sc2[s3], 6.0, 0);
+      // one legend row under the ribbon, spread across the grid span,
+      // each name behind a swatch in its stripe color
+      int lgx = lx0 + s3*(gw2/4);
+      int lgy = sy2 + 4*KP_S(4) + KP_S(2);
+      KPC_Fill(lgx, lgy + KP_S(2), KP_S(6), KP_S(3), sc2[s3]);
+      KPC_Lbl(lgx + KP_S(9), lgy, sn2[s3], sc2[s3], 6.0, 0);
      }
 
    int by0 = sy2 + KP_S(32);   // clears the ribbon + its legend row
@@ -815,7 +829,7 @@ void KPU_DrawModal(const int W, const int y0)
    cn[2] = LL("MONTHLY", "月盈亏");
    cn[3] = LL("DRAWDOWN", "回撤");
    cn[4] = "MFE/MAE";
-   cn[5] = LL("HEATMAP", "时段热力");
+   cn[5] = LL("HEATMAP", "时段盈亏");
    int sw = KP_S(76);
    for(int i=0; i<6; i++)
       KPU_Chip(px + i*(sw + KP_S(4)), y, sw, KP_S(16), cn[i],
