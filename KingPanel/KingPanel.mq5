@@ -8,10 +8,8 @@
 //|  EN-CN bilingual, gold chart theme, news marks & alerts          |
 //+------------------------------------------------------------------+
 #property copyright "KING PANEL"
-#property link      "https://t.me/topxea"
 #property version   "1.50"
 #property description "KING PANEL — Bloomberg-terminal style MT5 account dashboard"
-#property description "Telegram @topxea"
 #property description "v1.5: two audit rounds (99 fixes), MFE/MAE history backoff, self-explaining heatmap"
 
 #include "KP_Theme.mqh"
@@ -77,10 +75,6 @@ input double InpDefFloatTP = 500;     // Profit guard default (account currency)
 input int    InpDefCloseHH = 22;      // Timed close default hour (server, 0-23)
 input int    InpDefCloseMM = 30;      // Timed close default minute (0-59)
 
-input group "════ Brand ════"
-input bool   InpShowBrand  = true;         // Show Telegram channel
-input string InpChannel    = "@topxea";    // Telegram channel
-
 //--- state -----------------------------------------------------------
 bool     g_dirty        = true;
 datetime g_next_rebuild = 0;
@@ -140,8 +134,6 @@ int OnInit()
    KP_FontCJK  = InpFontCJK;
    KP_BaseW    = (int)MathMax(520, MathMin(900, InpWidth));
 
-   KP_BrandShow    = InpShowBrand;
-   KP_BrandChannel = InpChannel;
    KPT_PanelMagic  = InpPanelMagic;
    KP_PushOn       = InpPushOn;
    KP_PushRisk     = InpPushRisk;

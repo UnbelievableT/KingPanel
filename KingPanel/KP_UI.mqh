@@ -266,11 +266,6 @@ void KPU_DrawHeader(const int W)
    KPC_Text(gx + gw/2, KP_S(7), (KP_Lang == 0 ? "EN" : "中"),
             KP_TXT_DIM, (KP_Lang == 0 ? KP_FontMono : KP_FontCJK), 6.6, 1);
    KPC_AddHit(gx, 0, gw, h, KPHIT_LANG);
-
-   // brand: telegram channel, understated
-   if(KP_BrandShow)
-      KPC_Text(W - KP_S(110), KP_S(7), KP_BrandChannel, KP_TXT_FAINT,
-               KP_FontMono, 6.4, 2);
   }
 
 //--- account strip ---------------------------------------------------

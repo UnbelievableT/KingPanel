@@ -106,8 +106,6 @@ KingPanel/
 | Order | InpPanelMagic | 0 | 下单面板魔术号（0 = 计入手动统计） |
 | Risk | InpDefFloatSL / InpDefFloatTP | 500 / 500 | 浮亏/浮盈全平默认阈值（仅首次加载生效） |
 | Risk | InpDefCloseHH:MM | 22:30 | 定时平仓默认时刻（服务器时间） |
-| Brand | InpShowBrand | true | 显示 Telegram 频道 |
-| Brand | InpChannel | @topxea | Telegram 频道（标题栏与无持仓占位区低调显示） |
 
 ## 注意事项
 

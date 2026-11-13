@@ -118,8 +118,6 @@ KingPanel/
 | Prop | InpPropResetHH | 0 | Daily reset hour (server time) |
 | Risk | InpDefFloatSL / InpDefFloatTP | 500 / 500 | Loss / profit guard defaults (first load only) |
 | Risk | InpDefCloseHH:MM | 22:30 | Timed-close default (server time) |
-| Brand | InpShowBrand | true | Show the Telegram channel |
-| Brand | InpChannel | @topxea | Telegram channel (understated, title bar + empty-positions placeholder) |
 
 ## Notes
 
@@ -127,7 +125,3 @@ KingPanel/
 - Panel settings (tab, position, collapsed state, language, risk and news parameters) persist per login via terminal global variables and survive terminal restarts.
 - Session indicators are fixed GMT approximations without DST handling.
 - Chart-mark performance: mark objects are maintained incrementally by fingerprint — scroll/zoom only moves label price anchors; on H2 and above only vertical lines are drawn (labels would inevitably stack there and object churn would slow the chart).
-
----
-
-Telegram: [@topxea](https://t.me/topxea)

@@ -391,11 +391,8 @@ void KPU_DrawPositions(const int W, const int y0)
       if(g_live_count == 0)
         {
          KPC_Fill(px, y, cw, vis*rh, KP_BG_CELL);
-         int my = y + vis*rh/2 - KP_S(16);
+         int my = y + vis*rh/2 - KP_S(6);
          KPC_Lbl(px + cw/2, my, LL("NO OPEN POSITIONS", "当前无持仓"), KP_TXT_FAINT, 7.6, 1);
-         if(KP_BrandShow)
-            KPC_Text(px + cw/2, my + KP_S(20), "Telegram " + KP_BrandChannel,
-                     KP_TXT_FAINT, KP_FontMono, 6.4, 1);
         }
       else
         {

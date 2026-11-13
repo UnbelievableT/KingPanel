@@ -44,10 +44,6 @@
 string KP_FontMono = "Consolas";          // numerics
 string KP_FontCJK  = "Microsoft YaHei";   // CJK labels
 
-//--- brand: Telegram channel only (kept understated) ----------------
-bool   KP_BrandShow    = true;
-string KP_BrandChannel = "@topxea";
-
 // only one instance per login runs the guards/automation; the others
 // are live mirrors (declared here so every layer can read it)
 bool g_is_owner = true;
