@@ -38,7 +38,6 @@ KingPanel/
 
 ## 安装与编译
 
-> 仓库已附带编译产物 `KingPanel/KingPanel.ex5`（2026.08.14 于「矩阵管理」VM MetaEditor 编译，0 errors / 0 warnings），可直接使用。
 > 重新编译：`python3 compile_on_matrix.py [config]` —— 复用 fx-ea-research 框架推源码到 Parallels VM 用 MetaEditor64 编译并取回 .ex5（仅编译，不碰 VM 进程）。默认「矩阵管理」，传 `mt5.king.10k.json` 用「汇刃丨工作」。同步分发用 `python3 sync_to_vm.py [config]`。
 
 1. 将 `KingPanel` 整个文件夹复制到 `MQL5/Experts/` 下（数据目录：MT5 菜单 文件 → 打开数据文件夹）。

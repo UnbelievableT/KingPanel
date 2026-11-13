@@ -39,7 +39,6 @@ KingPanel/
 
 ## Install & Compile
 
-> A compiled `KingPanel/KingPanel.ex5` is included (MetaEditor, **0 errors / 0 warnings**) and can be used directly.
 > Rebuilding: `python3 compile_on_matrix.py [config]` pushes the sources to a Parallels VM, compiles with MetaEditor64 and pulls the `.ex5` back (compile only — never touches VM processes). `python3 sync_to_vm.py [config]` distributes the build. Both scripts are specific to the author's VM setup; on any Windows machine a plain MetaEditor **F7** build works the same.
 
 1. Copy the whole `KingPanel` folder into `MQL5/Experts/` (MT5 menu File → Open Data Folder).
